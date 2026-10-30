@@ -61,9 +61,9 @@ export const PublicHome: React.FC<PublicHomeProps> = ({
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       {/* HERO SECTION - Full unobstructed view of Boeing 747 air cargo freighter */}
       <section className="relative w-full overflow-hidden bg-slate-950">
-        <div className="relative w-full h-[360px] sm:h-[480px] lg:h-[640px] xl:h-[700px] overflow-hidden">
+        <div className="relative w-full h-[260px] sm:h-[380px] md:h-[480px] lg:h-[560px] xl:h-[620px] overflow-hidden">
           <img
-            src="/assets/aistudio/image_87dab548.png"
+            src="/assets/aistudio/image_feede8dc.png"
             alt="International Express Cargo Boeing 747 Freighter Aircraft on Airport Ramp"
             className="w-full h-full object-cover object-center filter brightness-[1.0] contrast-[1.02]"
           />

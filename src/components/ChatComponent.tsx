@@ -157,7 +157,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
       const recipientRole = isCustomer ? 'sub_admin' : 'customer';
 
-      await sendMessage({
+      const messagePayload: Parameters<typeof sendMessage>[0] = {
         conversationId: conversation.id,
         senderId: currentUserProfile.uid,
         senderName: currentUserProfile.fullName,
@@ -165,14 +165,19 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
         recipientId,
         recipientRole,
         text: inputText.trim(),
-        attachmentUrl: attachmentPreview?.url,
-        attachmentType: attachmentPreview?.type,
-        attachmentName: attachmentPreview?.name,
         sharedWithSubAdmin,
         moderationStatus,
         isEdited: false,
         isDeleted: false
-      });
+      };
+
+      if (attachmentPreview?.url) {
+        messagePayload.attachmentUrl = attachmentPreview.url;
+        messagePayload.attachmentType = attachmentPreview.type;
+        messagePayload.attachmentName = attachmentPreview.name;
+      }
+
+      await sendMessage(messagePayload);
 
       setInputText('');
       setAttachmentPreview(null);

@@ -9,7 +9,7 @@ export const FleetPage: React.FC = () => {
       payload: '137,700 kg (303,700 lbs)',
       range: '8,130 km (4,390 nmi)',
       features: ['Nose cargo door for ultra-long out-of-gauge equipment', 'Main deck capacity: 34 pallets', 'Lower deck container positions: 14 LD-1'],
-      image: '/assets/aistudio/image_87dab548.png'
+      image: '/assets/aistudio/image_feede8dc.png'
     },
     {
       name: 'Boeing 777F (Triple Seven Freighter)',

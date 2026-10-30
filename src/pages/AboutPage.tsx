@@ -43,7 +43,7 @@ export const AboutPage: React.FC = () => {
 
           <div className="rounded-3xl overflow-hidden shadow-2xl border border-gray-200">
             <img
-              src="/assets/aistudio/image_87dab548.png"
+              src="/assets/aistudio/image_feede8dc.png"
               alt="International Cargo Operations"
               className="w-full h-full object-cover"
             />

@@ -17,22 +17,22 @@ export const LanguageSelector: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div className="relative inline-block text-left text-xs">
-      <div className="flex items-center space-x-1.5 bg-white border border-gray-200 rounded-md px-2.5 py-1.5 shadow-xs hover:border-gray-300 transition-colors">
+    <div className="relative inline-block text-left text-xs shrink-0">
+      <div className="flex items-center space-x-1 sm:space-x-1.5 bg-white border border-gray-200 rounded-xl px-2 sm:px-2.5 py-1.5 shadow-xs hover:border-gray-300 transition-colors">
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center space-x-1.5 text-gray-700 font-medium cursor-pointer"
+          className="flex items-center space-x-1 sm:space-x-1.5 text-gray-700 font-medium cursor-pointer"
         >
           <span className="text-sm">{selectedLang.flag}</span>
-          <span className="truncate max-w-[100px]">{selectedLang.name}</span>
-          <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+          <span className="truncate max-w-[55px] sm:max-w-[90px] font-semibold">{selectedLang.name}</span>
+          <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />
         </button>
 
-        <div className="h-4 w-px bg-gray-200 mx-1" />
+        <div className="hidden sm:block h-4 w-px bg-gray-200 mx-1" />
 
-        <div className="flex items-center space-x-1 text-gray-500 font-medium">
-          <Globe className="w-3.5 h-3.5 text-blue-600" />
+        <div className="hidden sm:flex items-center space-x-1 text-gray-500 font-medium">
+          <Globe className="w-3.5 h-3.5 text-blue-600 shrink-0" />
           <span className="text-[11px] font-semibold text-gray-600 tracking-tight">Translate</span>
         </div>
       </div>

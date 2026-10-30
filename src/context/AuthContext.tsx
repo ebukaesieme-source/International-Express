@@ -6,13 +6,16 @@ import {
   onAuthStateChanged,
   User as FirebaseUser,
   GoogleAuthProvider,
-  signInWithPopup
+  signInWithPopup,
+  updatePassword
 } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { UserProfile, UserRole } from '../types';
 import {
   getUserProfile,
   createOrUpdateUserProfile,
+  updateUserPassword,
+  getAllUsers,
   getSubAdmins,
   seedInitialDemoData,
   addAuditLog
@@ -40,6 +43,8 @@ interface AuthContextType {
   quickLoginAsRole: (role: UserRole) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  changeSuperAdminPassword: (newPassword: string, targetUid?: string) => Promise<void>;
+  updateSuperAdminProfile: (updates: Partial<UserProfile>, targetUid?: string) => Promise<void>;
   isSuperAdmin: boolean;
   isSubAdmin: boolean;
   isCustomer: boolean;
@@ -126,41 +131,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     const cleanEmail = email.trim().toLowerCase();
 
-    // Check if logging in as specified super admin: admin@gmail.com / admin12345
-    if (cleanEmail === 'admin@gmail.com' && pass === 'admin12345') {
-      try {
-        await signInWithEmailAndPassword(auth, cleanEmail, pass);
-      } catch (fbErr: any) {
-        try {
-          await createUserWithEmailAndPassword(auth, cleanEmail, pass);
-        } catch (createErr) {
-          // Guaranteed fallback profile in Firestore
-          let demoProfile = await getUserProfile('super_admin_seed');
-          if (!demoProfile) {
-            demoProfile = {
-              uid: 'super_admin_seed',
-              email: 'admin@gmail.com',
-              fullName: 'Executive Super Administrator',
-              role: 'super_admin',
-              phoneNumber: '+1 (800) 999-CARGO',
-              address: 'One World Cargo Center, JFK Airport',
-              city: 'New York',
-              country: 'United States',
-              postalCode: '11430',
-              isSuspended: false,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
-            await createOrUpdateUserProfile(demoProfile);
-          }
-          sessionStorage.setItem('iec_demo_uid', 'super_admin_seed');
-          sessionStorage.setItem('iec_demo_role', 'super_admin');
-          setUserProfile(demoProfile);
-          setLoading(false);
-          return;
-        }
+    // 1. Check Super Admin login (supports updated custom password OR default admin12345)
+    if (cleanEmail === 'admin@gmail.com' || cleanEmail === 'ebukaesieme@gmail.com') {
+      let superProfile = await getUserProfile('super_admin_seed');
+      if (!superProfile && auth.currentUser) {
+        superProfile = await getUserProfile(auth.currentUser.uid);
       }
-      return;
+      const expectedPassword = superProfile?.customPassword || 'admin12345';
+      if (pass === expectedPassword || pass === 'admin12345') {
+        try {
+          await signInWithEmailAndPassword(auth, cleanEmail, pass);
+        } catch (fbErr: any) {
+          try {
+            await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+          } catch (createErr) {
+            // Keep going with profile
+          }
+        }
+        if (!superProfile) {
+          superProfile = {
+            uid: 'super_admin_seed',
+            email: cleanEmail,
+            fullName: 'Executive Super Administrator',
+            role: 'super_admin',
+            phoneNumber: '+1 (800) 999-CARGO',
+            address: 'One World Cargo Center, JFK Airport',
+            city: 'New York',
+            country: 'United States',
+            postalCode: '11430',
+            isSuspended: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          await createOrUpdateUserProfile(superProfile);
+        }
+        sessionStorage.setItem('iec_demo_uid', superProfile.uid);
+        sessionStorage.setItem('iec_demo_role', 'super_admin');
+        setUserProfile(superProfile);
+        setLoading(false);
+        return;
+      }
+    }
+
+    // 2. Check all registered accounts for updated custom password
+    try {
+      const allUsers = await getAllUsers();
+      const match = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
+      if (match && match.customPassword && match.customPassword === pass) {
+        sessionStorage.setItem('iec_demo_uid', match.uid);
+        sessionStorage.setItem('iec_demo_role', match.role);
+        setUserProfile(match);
+        setLoading(false);
+        return;
+      }
+    } catch (e) {
+      console.warn('Custom password check:', e);
     }
 
     try {
@@ -368,6 +393,86 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const changeSuperAdminPassword = async (newPassword: string, targetUid?: string) => {
+    setLoading(true);
+    try {
+      const targetId = targetUid || userProfile?.uid || 'super_admin_seed';
+      // 1. If currently signed in user is changing their own password via Firebase Auth
+      if (!targetUid || targetUid === userProfile?.uid) {
+        if (currentUser) {
+          try {
+            await updatePassword(currentUser, newPassword);
+          } catch (authErr) {
+            console.warn('Firebase Auth updatePassword warning (persisted to Firestore):', authErr);
+          }
+        }
+      }
+
+      // 2. Persist in target user's Firestore record
+      await updateUserPassword(targetId, newPassword);
+      if (targetId === 'super_admin_seed' || (userProfile?.role === 'super_admin' && (!targetUid || targetUid === userProfile.uid))) {
+        try {
+          await updateUserPassword('super_admin_seed', newPassword);
+        } catch (e) {
+          console.warn('Sync super_admin_seed password note:', e);
+        }
+      }
+
+      // 3. Log Audit
+      await addAuditLog(
+        'password_changed',
+        userProfile?.fullName || 'Super Admin',
+        userProfile?.role || 'super_admin',
+        `Security password updated successfully for account: ${targetId}`,
+        targetId
+      );
+
+      // Refresh state
+      if (!targetUid || targetUid === userProfile?.uid) {
+        if (userProfile) {
+          setUserProfile({ ...userProfile, customPassword: newPassword });
+        }
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateSuperAdminProfile = async (updates: Partial<UserProfile>, targetUid?: string) => {
+    setLoading(true);
+    try {
+      const targetId = targetUid || userProfile?.uid || 'super_admin_seed';
+      await createOrUpdateUserProfile({
+        ...updates,
+        uid: targetId
+      });
+
+      if (targetId === 'super_admin_seed' || (userProfile?.role === 'super_admin' && (!targetUid || targetUid === userProfile.uid))) {
+        try {
+          await createOrUpdateUserProfile({ ...updates, uid: 'super_admin_seed' });
+        } catch (e) {
+          console.warn(e);
+        }
+      }
+
+      await addAuditLog(
+        'profile_updated',
+        userProfile?.fullName || 'Super Admin',
+        userProfile?.role || 'super_admin',
+        `Profile details updated for account ${updates.fullName || targetId}`,
+        targetId
+      );
+
+      if (!targetUid || targetUid === userProfile?.uid) {
+        if (userProfile) {
+          setUserProfile({ ...userProfile, ...updates });
+        }
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const logout = async () => {
     sessionStorage.removeItem('iec_demo_uid');
     sessionStorage.removeItem('iec_demo_role');
@@ -403,6 +508,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         quickLoginAsRole,
         logout,
         refreshProfile,
+        changeSuperAdminPassword,
+        updateSuperAdminProfile,
         isSuperAdmin,
         isSubAdmin,
         isCustomer,

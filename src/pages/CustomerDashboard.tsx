@@ -23,7 +23,10 @@ import {
   History,
   Building,
   PanelLeft,
-  PanelLeftClose
+  PanelLeftClose,
+  Menu,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -46,7 +49,9 @@ export const CustomerDashboard: React.FC = () => {
   const { userProfile, logout } = useAuth();
   const customerId = userProfile?.uid || 'customer_demo_1';
 
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(
+    typeof window !== 'undefined' ? window.innerWidth >= 1024 : false
+  );
   const [activeTab, setActiveTab] = useState<
     'shipments' | 'track' | 'customs' | 'payment_methods' | 'chat' | 'activity_logs' | 'profile'
   >('shipments');
@@ -131,16 +136,17 @@ export const CustomerDashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
       {/* Top Banner */}
-      <div className="bg-[#0b132b] text-white px-4 sm:px-6 py-4 border-b border-[#1c2541] shadow-md">
+      <div className="bg-[#0b132b] text-white px-4 sm:px-6 py-4 border-b border-[#1c2541] shadow-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center space-x-3">
-            {/* Top hand corner navigation toggle icon */}
+            {/* Top hand corner navigation toggle icon - opens all siders / toggles full screen */}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="p-2 rounded-xl bg-[#1c2541] hover:bg-blue-600/30 text-gray-200 hover:text-white transition-colors cursor-pointer border border-gray-700 shrink-0"
-              title={sidebarOpen ? "Collapse navigation sider" : "Expand navigation sider"}
+              className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/30 transition-all flex items-center space-x-2 cursor-pointer shrink-0"
+              title={sidebarOpen ? "Full Screen Function (Hide Siders)" : "Click to See All Siders"}
             >
-              {sidebarOpen ? <PanelLeftClose className="w-5 h-5 text-blue-400" /> : <PanelLeft className="w-5 h-5 text-blue-400" />}
+              <Menu className="w-5 h-5 text-white" />
+              <span>{sidebarOpen ? 'Full Screen' : 'All Siders'}</span>
             </button>
 
             <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-blue-600 flex items-center justify-center font-bold text-base sm:text-lg shadow-md shrink-0">
@@ -222,11 +228,24 @@ export const CustomerDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Dashboard Body with Left Sidebar & Opposite Function Display: side-by-side across all screen widths */}
-      <div className="flex-1 flex flex-row w-full max-w-7xl mx-auto p-2 sm:p-4 lg:p-6 gap-2 sm:gap-4 lg:gap-6 min-w-0">
-        {/* Navigation Sidebar */}
-        {sidebarOpen ? (
-          <aside className="w-48 sm:w-60 lg:w-72 bg-white rounded-2xl sm:rounded-3xl border border-gray-200 p-3 sm:p-4 shadow-sm flex flex-col shrink-0 sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
+      {/* Mobile Drawer Backdrop when siders are open on mobile */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-40 lg:hidden transition-opacity"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Main Layout: Sider Drawer & Full Screen Function Area */}
+      <div className="flex-1 flex flex-col lg:flex-row w-full max-w-7xl mx-auto p-2 sm:p-4 lg:p-6 gap-4 sm:gap-6 min-w-0 relative">
+        {/* Navigation Sidebar Drawer */}
+        <aside
+          className={`
+            fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white p-4 shadow-2xl flex flex-col transition-transform duration-200
+            lg:static lg:z-auto lg:shadow-sm lg:rounded-3xl lg:border lg:border-gray-200 lg:transition-none lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto shrink-0
+            ${sidebarOpen ? 'translate-x-0 flex' : '-translate-x-full hidden lg:hidden'}
+          `}
+        >
             {/* Header with Top-Right Collapse Icon */}
             <div className="flex items-center justify-between px-1 py-1 mb-2">
               <div className="flex items-center space-x-2.5">
@@ -373,104 +392,25 @@ export const CustomerDashboard: React.FC = () => {
               </button>
             </div>
           </aside>
-        ) : (
-          /* Compact Rail Sider when collapsed */
-          <aside className="w-14 sm:w-16 bg-white rounded-2xl sm:rounded-3xl border border-gray-200 py-3 px-1 shadow-sm flex flex-col items-center shrink-0 sticky top-4 max-h-[calc(100vh-2rem)]">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="p-2 mb-2 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors cursor-pointer"
-              title="Expand Sider Menu"
-            >
-              <PanelLeft className="w-5 h-5" />
-            </button>
 
-            <nav className="flex-1 space-y-2 flex flex-col items-center mt-2">
+        {/* Function Display Area: Displays full screen well when siders are closed */}
+        <main className="flex-1 w-full min-w-0 space-y-6">
+          {/* Helpful quick bar when siders are hidden */}
+          {!sidebarOpen && (
+            <div className="flex items-center justify-between bg-white px-4 py-2.5 rounded-2xl border border-gray-200 shadow-xs">
+              <div className="flex items-center space-x-2 text-xs font-bold text-gray-700">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span>Full Screen View Active: <strong className="text-blue-600 uppercase">{activeTab}</strong></span>
+              </div>
               <button
-                onClick={() => setActiveTab('shipments')}
-                className={`p-2.5 rounded-xl cursor-pointer transition-colors ${
-                  activeTab === 'shipments' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-slate-100'
-                }`}
-                title={`Consignments (${shipments.length})`}
+                onClick={() => setSidebarOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer"
               >
-                <Package className="w-4 h-4" />
+                <Menu className="w-3.5 h-3.5 text-white" />
+                <span>See All Siders</span>
               </button>
-
-              <button
-                onClick={() => setActiveTab('track')}
-                className={`p-2.5 rounded-xl cursor-pointer transition-colors ${
-                  activeTab === 'track' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-slate-100'
-                }`}
-                title="Live Tracker"
-              >
-                <Search className="w-4 h-4" />
-              </button>
-
-              <button
-                onClick={() => setActiveTab('customs')}
-                className={`p-2.5 rounded-xl cursor-pointer transition-colors ${
-                  activeTab === 'customs' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-slate-100'
-                }`}
-                title="Duties"
-              >
-                <DollarSign className="w-4 h-4 text-emerald-600" />
-              </button>
-
-              <button
-                onClick={() => setActiveTab('payment_methods')}
-                className={`p-2.5 rounded-xl cursor-pointer transition-colors ${
-                  activeTab === 'payment_methods' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-slate-100'
-                }`}
-                title="Payment Methods"
-              >
-                <CreditCard className="w-4 h-4" />
-              </button>
-
-              <button
-                onClick={() => setActiveTab('chat')}
-                className={`p-2.5 rounded-xl cursor-pointer transition-colors ${
-                  activeTab === 'chat' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-slate-100'
-                }`}
-                title="Dispatcher Chat"
-              >
-                <MessageSquare className="w-4 h-4" />
-              </button>
-
-              <button
-                onClick={() => setActiveTab('activity_logs')}
-                className={`p-2.5 rounded-xl cursor-pointer transition-colors ${
-                  activeTab === 'activity_logs' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-slate-100'
-                }`}
-                title="Activity Logs"
-              >
-                <History className="w-4 h-4" />
-              </button>
-
-              <button
-                onClick={() => setActiveTab('profile')}
-                className={`p-2.5 rounded-xl cursor-pointer transition-colors ${
-                  activeTab === 'profile' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-slate-100'
-                }`}
-                title="Consignee Profile"
-              >
-                <User className="w-4 h-4" />
-              </button>
-            </nav>
-
-            <button
-              onClick={async () => {
-                await logout();
-                window.location.reload();
-              }}
-              className="p-2.5 mt-auto rounded-xl text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-              title="Sign Out"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </aside>
-        )}
-
-        {/* Function Display Opposite It: Displays side-by-side on all screens */}
-        <main className="flex-1 min-w-0 space-y-6 overflow-hidden">
+            </div>
+          )}
 
         {/* TAB 1: SHIPMENTS OVERVIEW */}
         {activeTab === 'shipments' && (
@@ -520,7 +460,7 @@ export const CustomerDashboard: React.FC = () => {
                       key={s.id}
                       className="p-5 bg-slate-50 border border-gray-200 rounded-2xl hover:border-blue-400 transition-all flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4"
                     >
-                      <div className="space-y-1.5">
+                      <div className="space-y-2 flex-1">
                         <div className="flex items-center space-x-3">
                           <span className="font-mono text-base font-black text-gray-900">
                             {s.trackingNumber}
@@ -538,12 +478,35 @@ export const CustomerDashboard: React.FC = () => {
                             <span>{s.departureLocation} → {s.destinationLocation}</span>
                           </span>
                           <span>•</span>
-                          <span>Carrier: <strong className="text-gray-700">{s.carrier}</strong></span>
+                          <span className="text-blue-700 font-bold">
+                            Current Location: {s.currentLocation || s.departureLocation}
+                          </span>
                           <span>•</span>
-                          <span>Weight: <strong className="text-gray-700">{s.weightKg} kg</strong></span>
+                          <span>Carrier: <strong className="text-gray-700">{s.carrier}</strong></span>
                           <span>•</span>
                           <span>Est. Arrival: <strong className="text-gray-700">{s.estimatedDeliveryDate}</strong></span>
                         </div>
+
+                        {/* Delivery Moving Progress Bar */}
+                        <div className="pt-2 max-w-md">
+                          <div className="flex justify-between text-[11px] font-mono font-bold text-gray-600 mb-1">
+                            <span>Delivery Moving Progress</span>
+                            <span className="text-blue-600">{s.deliveryProgressPercentage ?? 35}%</span>
+                          </div>
+                          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-blue-600 via-indigo-500 to-emerald-500 rounded-full"
+                              style={{ width: `${s.deliveryProgressPercentage ?? 35}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Fee Purpose & Assessment */}
+                        {s.customsDutyAmount > 0 && (
+                          <div className="text-xs text-amber-800 bg-amber-50/80 px-3 py-1.5 rounded-xl border border-amber-200 inline-block mt-1">
+                            <span className="font-bold">Assessed Fee:</span> {s.customsDutyCurrency} {s.customsDutyAmount.toFixed(2)} • <span className="font-semibold text-gray-700">Purpose: {s.feePurpose || 'Bonded Inspection & Customs Tariffs'}</span> ({s.customsPaymentStatus})
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-3 self-end lg:self-center">
@@ -553,7 +516,7 @@ export const CustomerDashboard: React.FC = () => {
                             className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-gray-950 text-xs font-bold rounded-xl shadow-xs flex items-center space-x-1.5 cursor-pointer"
                           >
                             <CreditCard className="w-3.5 h-3.5" />
-                            <span>Pay Duty (${s.customsDutyAmount})</span>
+                            <span>Pay Fee (${s.customsDutyAmount})</span>
                           </button>
                         )}
 
@@ -565,7 +528,7 @@ export const CustomerDashboard: React.FC = () => {
                           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs flex items-center space-x-1.5 cursor-pointer"
                         >
                           <Search className="w-3.5 h-3.5" />
-                          <span>Track Checkpoints</span>
+                          <span>Track Telemetry</span>
                         </button>
                       </div>
                     </div>
@@ -603,7 +566,7 @@ export const CustomerDashboard: React.FC = () => {
             <div className="space-y-4">
               {shipments.map((s) => (
                 <div key={s.id} className="p-5 bg-slate-50 border border-gray-200 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                  <div>
+                  <div className="space-y-1">
                     <div className="flex items-center space-x-3">
                       <span className="font-mono font-bold text-gray-900">{s.trackingNumber}</span>
                       <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
@@ -614,9 +577,12 @@ export const CustomerDashboard: React.FC = () => {
                         {s.customsPaymentStatus}
                       </span>
                     </div>
-                    <p className="text-xs text-gray-600 mt-1">{s.customsNotes || 'Standard customs clearance inspection.'}</p>
+                    <div className="text-xs font-bold text-gray-800">
+                      Fee Purpose: <span className="text-amber-800">{s.feePurpose || 'Bonded Inspection & Customs Tariffs'}</span>
+                    </div>
+                    <p className="text-xs text-gray-600">{s.customsNotes || 'Standard customs clearance inspection.'}</p>
                     {s.customsReference && (
-                      <div className="text-[11px] font-mono text-gray-400 mt-0.5">Ref: {s.customsReference}</div>
+                      <div className="text-[11px] font-mono text-gray-400">Ref: {s.customsReference}</div>
                     )}
                   </div>
 

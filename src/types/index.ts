@@ -17,6 +17,7 @@ export interface UserProfile {
   assignedSubAdminName?: string;
   isSuspended?: boolean;
   notes?: string;
+  customPassword?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -79,11 +80,13 @@ export interface Shipment {
   carrier: string;
   status: ShipmentStatus;
   statusNotes?: string;
+  deliveryProgressPercentage?: number;
   estimatedDeliveryDate: string;
   actualDeliveryDate?: string;
   customsDutyAmount: number;
   customsDutyCurrency: string;
   customsPaymentStatus: CustomsPaymentStatus;
+  feePurpose?: string;
   customsReference?: string;
   customsNotes?: string;
   documents?: ShipmentDocument[];
@@ -100,6 +103,8 @@ export interface TrackingEvent {
   title: string;
   description: string;
   location: string;
+  facility?: string;
+  deliveryProgressPercentage?: number;
   timestamp: string;
   recordedBy: string;
   recordedByRole: string;

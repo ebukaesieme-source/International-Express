@@ -10,7 +10,13 @@ import {
   Layers,
   Sparkles,
   PhoneCall,
-  Search
+  Search,
+  Home,
+  Plane,
+  Building2,
+  ChevronRight,
+  Globe,
+  ArrowRight
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { LanguageSelector } from './LanguageSelector';
@@ -28,9 +34,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   openAuthModal,
   openTrackModal,
 }) => {
-  const { userProfile, logout, quickLoginAsRole } = useAuth();
+  const { userProfile, logout } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showRoleSwitcher, setShowRoleSwitcher] = useState(false);
+  const [mobileTrackInput, setMobileTrackInput] = useState('');
 
   const getDashboardTab = () => {
     if (!userProfile) return 'home';
@@ -53,14 +59,57 @@ export const Navbar: React.FC<NavbarProps> = ({
     return 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30';
   };
 
+  const homePages = [
+    {
+      id: 'home',
+      name: 'Home',
+      icon: Home,
+      description: 'Global cargo freighters, live waybill search & network metrics'
+    },
+    {
+      id: 'services',
+      name: 'Services',
+      icon: Layers,
+      description: 'Boeing 747 air freight, ocean containers & bonded customs clearance'
+    },
+    {
+      id: 'fleet',
+      name: 'Fleet & Network',
+      icon: Plane,
+      description: 'Scheduled cargo freighters, global corridors & airport ramp facilities'
+    },
+    {
+      id: 'track',
+      name: 'Track Cargo',
+      icon: Search,
+      description: 'Live cargo telemetry, checkpoint inspection photos & progress tracker',
+      action: () => {
+        if (openTrackModal) openTrackModal();
+        else setActiveTab('track');
+      }
+    },
+    {
+      id: 'about',
+      name: 'About Us',
+      icon: Building2,
+      description: 'Certified intercontinental logistics carrier operating across 220+ territories'
+    },
+    {
+      id: 'contact',
+      name: 'Contact & Dispatch',
+      icon: PhoneCall,
+      description: '24/7 round-the-clock air cargo operations & emergency shipment support'
+    }
+  ];
+
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-gray-100 shadow-xs">
-      {/* Top micro bar */}
-      <div className="bg-[#0b132b] text-gray-300 text-xs px-4 py-2 flex flex-wrap justify-between items-center border-b border-[#1c2541]">
-        <div className="flex items-center space-x-3 text-[11px]">
-          <span className="flex items-center space-x-1 font-medium text-amber-400">
+      {/* Top micro announcement bar */}
+      <div className="bg-[#0b132b] text-gray-300 text-xs px-3 sm:px-6 py-1.5 sm:py-2 flex justify-between items-center border-b border-[#1c2541]">
+        <div className="flex items-center space-x-2 sm:space-x-3 text-[11px] truncate">
+          <span className="flex items-center space-x-1 font-bold text-amber-400 shrink-0">
             <Shield className="w-3.5 h-3.5" />
-            <span>Official Carrier Portal</span>
+            <span className="truncate">Official Carrier Portal</span>
           </span>
           <span className="hidden md:inline text-gray-500">|</span>
           <span className="hidden md:flex items-center space-x-1 text-gray-300">
@@ -69,36 +118,39 @@ export const Navbar: React.FC<NavbarProps> = ({
           </span>
         </div>
 
-        <div className="hidden sm:flex items-center space-x-4 text-[11px] text-gray-400">
-          <span>IATA Cargo C-TPAT Certified</span>
-          <span className="text-gray-600">•</span>
-          <span>ISO 9001:2026 Quality</span>
+        <div className="flex items-center space-x-3 text-[11px] text-gray-400 shrink-0">
+          <span className="hidden xs:inline">IATA C-TPAT Certified</span>
+          <span className="hidden xs:inline text-gray-600">•</span>
+          <span className="text-emerald-400 font-semibold flex items-center space-x-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Flight Ops Live</span>
+          </span>
         </div>
       </div>
 
       {/* Main Navbar */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 md:h-20">
-          {/* Logo - Matching screenshot style */}
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16 md:h-20 gap-2">
+          {/* Logo */}
           <div
             onClick={() => setActiveTab('home')}
-            className="flex items-center space-x-3 cursor-pointer group"
+            className="flex items-center space-x-2.5 sm:space-x-3 cursor-pointer group shrink-0"
           >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#2563eb] to-[#4f46e5] flex items-center justify-center text-white shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-[#2563eb] to-[#4f46e5] flex items-center justify-center text-white shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform shrink-0">
               <Truck className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-lg font-black tracking-tight text-gray-900 flex items-center space-x-1">
+              <div className="text-base sm:text-lg font-black tracking-tight text-gray-900 flex items-center space-x-1 leading-tight">
                 <span>CARGO</span>
                 <span className="text-blue-600">LOGISTICS</span>
               </div>
-              <p className="text-[10px] tracking-widest uppercase font-semibold text-gray-400">
+              <p className="text-[9px] sm:text-[10px] tracking-widest uppercase font-semibold text-gray-400 leading-none">
                 International Express
               </p>
             </div>
           </div>
 
-          {/* Desktop Navigation Links */}
+          {/* Desktop Navigation Links (Visible on desktop lg+) */}
           <nav className="hidden lg:flex items-center space-x-6 xl:space-x-8">
             <button
               onClick={() => setActiveTab('home')}
@@ -166,17 +218,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </nav>
 
-          {/* Right Action Cluster */}
-          <div className="hidden sm:flex items-center space-x-4">
-            {/* Google Translate Selector */}
+          {/* Desktop Right Action Cluster (Visible on desktop lg+) */}
+          <div className="hidden lg:flex items-center space-x-4">
             <LanguageSelector />
 
-            {/* Auth Buttons or User Profile */}
             {userProfile ? (
               <div className="flex items-center space-x-3">
                 <button
                   onClick={() => setActiveTab(getDashboardTab())}
-                  className="flex items-center space-x-2 bg-slate-900 text-white px-3.5 py-2 rounded-lg text-xs font-semibold shadow-xs hover:bg-slate-800 transition-colors cursor-pointer"
+                  className="flex items-center space-x-2 bg-slate-900 text-white px-3.5 py-2 rounded-xl text-xs font-semibold shadow-xs hover:bg-slate-800 transition-colors cursor-pointer"
                 >
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${getRoleBadgeStyle()}`}>
                     {getRoleLabel()}
@@ -205,7 +255,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
                 <button
                   onClick={() => openAuthModal('register')}
-                  className="bg-[#4f46e5] hover:bg-[#4338ca] text-white text-sm font-semibold px-5 py-2.5 rounded-lg shadow-sm hover:shadow-md transition-all cursor-pointer"
+                  className="bg-[#4f46e5] hover:bg-[#4338ca] text-white text-sm font-semibold px-5 py-2.5 rounded-xl shadow-sm hover:shadow-md transition-all cursor-pointer"
                 >
                   Register
                 </button>
@@ -213,127 +263,249 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </div>
 
-          {/* Mobile hamburger button */}
-          <div className="flex items-center space-x-2 sm:hidden">
+          {/* Mobile & Tablet Action Cluster with 3-Line Hamburger Menu Button (Visible on < lg) */}
+          <div className="flex items-center space-x-2 lg:hidden">
+            {/* Compact Language Selector */}
             <LanguageSelector />
+
+            {/* 3 SIGN DIGITS LINE (3-Line Hamburger Menu Button) */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 text-gray-700 hover:text-blue-600 rounded-md cursor-pointer"
+              className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-blue-500/20 transition-all cursor-pointer shrink-0"
+              title="Click to see all top home pages"
+              aria-label="Toggle navigation menu with all top home pages"
             >
-              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+              {mobileMenuOpen ? (
+                <>
+                  <X className="w-5 h-5 text-white" />
+                  <span className="hidden xs:inline">Close</span>
+                </>
+              ) : (
+                <>
+                  {/* 3 sign digits line icon: 3 horizontal lines */}
+                  <div className="flex flex-col justify-center space-y-1 w-4 h-4 shrink-0">
+                    <span className="block h-0.5 w-full bg-white rounded-full"></span>
+                    <span className="block h-0.5 w-full bg-white rounded-full"></span>
+                    <span className="block h-0.5 w-full bg-white rounded-full"></span>
+                  </div>
+                  <span className="text-xs font-bold">Pages</span>
+                </>
+              )}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Mobile Drawer Menu */}
+      {/* Mobile Drawer Menu - Shows ALL Top Home Pages */}
       {mobileMenuOpen && (
-        <div className="sm:hidden bg-white border-b border-gray-200 px-4 pt-3 pb-6 space-y-3">
-          <div className="grid grid-cols-2 gap-2 pb-3 border-b border-gray-100">
-            <button
-              onClick={() => {
-                setActiveTab('home');
-                setMobileMenuOpen(false);
-              }}
-              className="text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-800 hover:bg-gray-50"
-            >
-              Home
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('services');
-                setMobileMenuOpen(false);
-              }}
-              className="text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-800 hover:bg-gray-50"
-            >
-              Services
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('fleet');
-                setMobileMenuOpen(false);
-              }}
-              className="text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-800 hover:bg-gray-50"
-            >
-              Fleet
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('track');
-                setMobileMenuOpen(false);
-              }}
-              className="text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-800 hover:bg-gray-50"
-            >
-              Track Package
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('about');
-                setMobileMenuOpen(false);
-              }}
-              className="text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-800 hover:bg-gray-50"
-            >
-              About Us
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('contact');
-                setMobileMenuOpen(false);
-              }}
-              className="text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-800 hover:bg-gray-50"
-            >
-              Contact Us
-            </button>
-          </div>
-
-          {userProfile ? (
-            <div className="pt-2 space-y-2">
-              <div className="text-xs text-gray-500">
-                Logged in as <strong className="text-gray-900">{userProfile.fullName}</strong> ({getRoleLabel()})
+        <div className="lg:hidden fixed inset-x-0 top-[88px] sm:top-[96px] bottom-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-start animate-fadeIn">
+          <div className="bg-white border-b border-gray-200 shadow-2xl max-h-[82vh] overflow-y-auto px-4 py-5 space-y-5">
+            {/* Header in Drawer */}
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="flex items-center space-x-2">
+                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <Menu className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-gray-900 leading-tight">
+                    Top Home Navigation Pages
+                  </h3>
+                  <p className="text-[10px] text-gray-500">
+                    Select any page to view full details
+                  </p>
+                </div>
               </div>
+
               <button
-                onClick={() => {
-                  setActiveTab(getDashboardTab());
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full bg-slate-900 text-white py-2 rounded-lg text-sm font-semibold text-center"
+                onClick={() => setMobileMenuOpen(false)}
+                className="p-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 cursor-pointer"
               >
-                Go to {getRoleLabel()} Dashboard
-              </button>
-              <button
-                onClick={() => {
-                  logout();
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full text-red-600 bg-red-50 py-2 rounded-lg text-sm font-semibold text-center"
-              >
-                Sign Out
+                <X className="w-4 h-4" />
               </button>
             </div>
-          ) : (
-            <div className="flex flex-col space-y-2 pt-2">
-              <button
-                onClick={() => {
-                  openAuthModal('login');
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full text-center py-2 text-sm font-semibold text-gray-800 border border-gray-200 rounded-lg"
-              >
-                Sign In
-              </button>
-              <button
-                onClick={() => {
-                  openAuthModal('register');
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full text-center py-2 text-sm font-semibold text-white bg-[#4f46e5] rounded-lg shadow-sm"
-              >
-                Create Account (Register)
-              </button>
+
+            {/* Quick Waybill Search Bar Inside Mobile Drawer */}
+            <div className="bg-slate-50 p-3 rounded-2xl border border-gray-200">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5 block">
+                Instant Waybill Checkpoint Track
+              </span>
+              <div className="flex items-center space-x-2">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={mobileTrackInput}
+                    onChange={(e) => setMobileTrackInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        if (openTrackModal) openTrackModal();
+                        else setActiveTab('track');
+                        setMobileMenuOpen(false);
+                      }
+                    }}
+                    placeholder="e.g. IEC-748920-EXP"
+                    className="w-full pl-8 pr-3 py-2 bg-white border border-gray-300 rounded-xl text-xs font-mono uppercase"
+                  />
+                  <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                </div>
+                <button
+                  onClick={() => {
+                    if (openTrackModal) openTrackModal();
+                    else setActiveTab('track');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer shrink-0"
+                >
+                  Track
+                </button>
+              </div>
             </div>
-          )}
+
+            {/* List of ALL Top Home Pages */}
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 px-1">
+                Explore Portal
+              </span>
+
+              {homePages.map((page) => {
+                const IconComponent = page.icon;
+                const isCurrent = activeTab === page.id;
+                return (
+                  <button
+                    key={page.id}
+                    onClick={() => {
+                      if (page.action) {
+                        page.action();
+                      } else {
+                        setActiveTab(page.id);
+                      }
+                      setMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between p-3 rounded-2xl text-left transition-all cursor-pointer ${
+                      isCurrent
+                        ? 'bg-blue-50/90 border-2 border-blue-500/60 shadow-xs'
+                        : 'bg-white hover:bg-slate-50 border border-gray-100'
+                    }`}
+                  >
+                    <div className="flex items-start space-x-3 min-w-0">
+                      <div className={`p-2 rounded-xl shrink-0 mt-0.5 ${
+                        isCurrent
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-100 text-gray-700 group-hover:bg-blue-50 group-hover:text-blue-600'
+                      }`}>
+                        <IconComponent className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className={`text-sm font-bold flex items-center space-x-2 ${
+                          isCurrent ? 'text-blue-700' : 'text-gray-900'
+                        }`}>
+                          <span>{page.name}</span>
+                          {isCurrent && (
+                            <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black uppercase bg-blue-600 text-white">
+                              Active
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-gray-500 truncate mt-0.5">
+                          {page.description}
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronRight className={`w-4 h-4 shrink-0 ml-2 ${
+                      isCurrent ? 'text-blue-600' : 'text-gray-400'
+                    }`} />
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* User Account / Login & Register Actions */}
+            <div className="pt-3 border-t border-gray-100">
+              {userProfile ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-gray-200">
+                    <div className="flex items-center space-x-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold text-xs">
+                        {userProfile.fullName.charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-gray-900 truncate">
+                          {userProfile.fullName}
+                        </div>
+                        <span className={`inline-block px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${getRoleBadgeStyle()}`}>
+                          {getRoleLabel()}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={async () => {
+                        await logout();
+                        setMobileMenuOpen(false);
+                        setActiveTab('home');
+                      }}
+                      className="text-xs font-bold text-red-600 hover:text-red-700 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
+                    >
+                      Sign Out
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setActiveTab(getDashboardTab());
+                      setMobileMenuOpen(false);
+                    }}
+                    className="w-full bg-[#0b132b] hover:bg-[#1c2541] text-white py-3 rounded-2xl text-xs font-bold text-center shadow-md flex items-center justify-center space-x-2 cursor-pointer transition-colors"
+                  >
+                    <span>Open {getRoleLabel()} Dashboard</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 px-1">
+                    Customer & Dispatch Portal
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => {
+                        openAuthModal('login');
+                        setMobileMenuOpen(false);
+                      }}
+                      className="w-full text-center py-2.5 text-xs font-bold text-gray-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                    >
+                      Login
+                    </button>
+                    <button
+                      onClick={() => {
+                        openAuthModal('register');
+                        setMobileMenuOpen(false);
+                      }}
+                      className="w-full text-center py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition-colors cursor-pointer"
+                    >
+                      Register
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 24/7 Dispatch Hotline */}
+            <div className="p-3 bg-blue-50/60 rounded-2xl border border-blue-100 flex items-center justify-between text-xs">
+              <div className="flex items-center space-x-2 text-blue-900 font-bold">
+                <PhoneCall className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>24/7 Global Air Cargo Helpline</span>
+              </div>
+              <a
+                href="tel:+18005552274"
+                className="font-mono font-bold text-blue-700 hover:underline"
+              >
+                +1 (800) 555-CARGO
+              </a>
+            </div>
+          </div>
         </div>
       )}
     </header>
   );
 };
+

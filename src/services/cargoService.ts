@@ -27,6 +27,24 @@ import {
   ShipmentStatus
 } from '../types';
 
+/**
+ * Strips all undefined properties recursively from an object before writing to Firestore,
+ * preventing Firestore "Unsupported field value: undefined" runtime errors.
+ */
+export function cleanFirestoreData<T extends Record<string, any>>(obj: T): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
+        result[key] = cleanFirestoreData(value);
+      } else {
+        result[key] = value;
+      }
+    }
+  }
+  return result;
+}
+
 /* ---------------- USERS ---------------- */
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
@@ -62,12 +80,25 @@ export async function createOrUpdateUserProfile(profile: Partial<UserProfile> & 
       assignedSubAdminName: profile.assignedSubAdminName ?? existing?.assignedSubAdminName ?? '',
       isSuspended: profile.isSuspended ?? existing?.isSuspended ?? false,
       notes: profile.notes ?? existing?.notes ?? '',
+      customPassword: profile.customPassword ?? existing?.customPassword,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
-    await setDoc(doc(db, 'users', profile.uid), data, { merge: true });
+    await setDoc(doc(db, 'users', profile.uid), cleanFirestoreData(data), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function updateUserPassword(uid: string, newPassword: string): Promise<void> {
+  const path = `users/${uid}`;
+  try {
+    await updateDoc(doc(db, 'users', uid), {
+      customPassword: newPassword,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
 
@@ -194,7 +225,7 @@ export async function claimCustomer(
       const custDoc = await getDoc(doc(db, 'users', customerId));
       const custData = custDoc.data() as UserProfile | undefined;
       const convId = `conv_${customerId}_${subAdminId}`;
-      await setDoc(doc(db, 'conversations', convId), {
+      await setDoc(doc(db, 'conversations', convId), cleanFirestoreData({
         id: convId,
         customerId,
         customerName: custData?.fullName || 'Customer Consignee',
@@ -208,10 +239,10 @@ export async function claimCustomer(
         unreadCountCustomer: 1,
         createdAt: now,
         updatedAt: now
-      });
+      }));
 
       // Send greeting message from Sub Admin to customer
-      await addDoc(collection(db, 'messages'), {
+      await addDoc(collection(db, 'messages'), cleanFirestoreData({
         conversationId: convId,
         senderId: subAdminId,
         senderName: subAdminName,
@@ -220,7 +251,7 @@ export async function claimCustomer(
         sharedWithSubAdmin: true,
         moderationStatus: 'approved',
         createdAt: now
-      });
+      }));
     }
 
     await addAuditLog(
@@ -316,7 +347,7 @@ export async function createShipment(
   };
 
   try {
-    await setDoc(doc(db, 'shipments', shipmentId), shipment);
+    await setDoc(doc(db, 'shipments', shipmentId), cleanFirestoreData(shipment));
 
     // Initial milestone tracking event
     await addTrackingEvent({
@@ -346,10 +377,10 @@ export async function updateShipment(
   const path = `shipments/${id}`;
   const now = new Date().toISOString();
   try {
-    await updateDoc(doc(db, 'shipments', id), {
+    await updateDoc(doc(db, 'shipments', id), cleanFirestoreData({
       ...updates,
       updatedAt: now,
-    });
+    }));
 
     // If status changed, automatically log a milestone tracking event
     if (updates.status && actorName && actorRole) {
@@ -388,7 +419,7 @@ export async function deleteShipment(id: string): Promise<void> {
 export async function addTrackingEvent(event: Omit<TrackingEvent, 'id'>): Promise<string> {
   const path = 'tracking_events';
   try {
-    const docRef = await addDoc(collection(db, 'tracking_events'), event);
+    const docRef = await addDoc(collection(db, 'tracking_events'), cleanFirestoreData(event));
     return docRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
@@ -446,7 +477,8 @@ export async function updateCustomsDuty(
   currency: string,
   paymentStatus: CustomsPaymentStatus,
   reference?: string,
-  notes?: string
+  notes?: string,
+  feePurpose?: string
 ): Promise<void> {
   const path = `shipments/${shipmentId}`;
   try {
@@ -456,6 +488,7 @@ export async function updateCustomsDuty(
       customsPaymentStatus: paymentStatus,
       customsReference: reference || '',
       customsNotes: notes || '',
+      feePurpose: feePurpose || 'Customs Clearance & Import Duty',
       updatedAt: new Date().toISOString()
     });
   } catch (error) {
@@ -467,10 +500,10 @@ export async function recordPayment(payment: Omit<PaymentRecord, 'id' | 'created
   const path = 'payments';
   try {
     const now = new Date().toISOString();
-    const docRef = await addDoc(collection(db, 'payments'), {
+    const docRef = await addDoc(collection(db, 'payments'), cleanFirestoreData({
       ...payment,
       createdAt: now
-    });
+    }));
 
     // Also update shipment payment status if applicable
     if (payment.status === 'confirmed') {
@@ -596,10 +629,11 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
   const path = 'messages';
   try {
     const now = new Date().toISOString();
-    const docRef = await addDoc(collection(db, 'messages'), {
+    const dataToSave = cleanFirestoreData({
       ...msg,
       createdAt: now
     });
+    const docRef = await addDoc(collection(db, 'messages'), dataToSave);
 
     // Update conversation last message if approved or not pending moderation
     if (msg.moderationStatus === 'approved') {
