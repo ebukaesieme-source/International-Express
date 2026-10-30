@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Users collection: Allow read and write for profile registration, authentication and admin management
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Shipments collection: Public tracking and logistics dispatch updates
+    match /shipments/{shipmentId} {
+      allow read, write: if true;
+    }
+
+    // Tracking events: Milestone timeline records
+    match /tracking_events/{eventId} {
+      allow read, write: if true;
+    }
+
+    // Conversations: Real-time messaging threads between consignees and dispatchers
+    match /conversations/{conversationId} {
+      allow read, write: if true;
+    }
+
+    // Messages: Individual messages, media attachments, moderation and edit/deletion
+    match /messages/{messageId} {
+      allow read, write: if true;
+    }
+
+    // Payments: Customs duty settlements and ledger
+    match /payments/{paymentId} {
+      allow read, write: if true;
+    }
+
+    // System Settings: Global configuration and moderation status
+    match /system_settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    // Audit logs: Immutable administrative log
+    match /audit_logs/{logId} {
+      allow read, create: if true;
+      allow update, delete: if false; // Immutable audit records
+    }
+  }
+}

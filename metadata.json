@@ -1,0 +1,6 @@
+{
+  "name": "International Express Cargo",
+  "description": "International Cargo, Shipment Tracking, Customer Management and Delivery Administration System.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

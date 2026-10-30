@@ -1,0 +1,218 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile representing Super Admin, Sub Admin, or Customer",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "fullName": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["super_admin", "sub_admin", "customer"] },
+        "phoneNumber": { "type": "string", "maxLength": 30 },
+        "address": { "type": "string", "maxLength": 200 },
+        "country": { "type": "string", "maxLength": 80 },
+        "assignedSubAdminId": { "type": "string" },
+        "assignedSubAdminName": { "type": "string" },
+        "isSuspended": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "fullName", "role"]
+    },
+    "Shipment": {
+      "title": "Shipment",
+      "description": "International cargo consignment record with tracking and customs info",
+      "type": "object",
+      "properties": {
+        "trackingNumber": { "type": "string", "maxLength": 64 },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "subAdminId": { "type": "string" },
+        "subAdminName": { "type": "string" },
+        "description": { "type": "string", "maxLength": 500 },
+        "senderName": { "type": "string" },
+        "senderAddress": { "type": "string" },
+        "senderCountry": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "recipientAddress": { "type": "string" },
+        "recipientCountry": { "type": "string" },
+        "departureLocation": { "type": "string" },
+        "destinationLocation": { "type": "string" },
+        "carrier": { "type": "string" },
+        "weightKg": { "type": "number" },
+        "packageType": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": [
+            "registered",
+            "package_received",
+            "processing",
+            "departure",
+            "in_transit",
+            "arrival_destination",
+            "customs_processing",
+            "out_for_delivery",
+            "delivered",
+            "cancelled"
+          ]
+        },
+        "estimatedDeliveryDate": { "type": "string" },
+        "actualDeliveryDate": { "type": "string" },
+        "customsDutyAmount": { "type": "number" },
+        "customsDutyCurrency": { "type": "string" },
+        "customsPaymentStatus": { "type": "string", "enum": ["pending", "partially_paid", "paid", "waived"] },
+        "customsReference": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["trackingNumber", "customerId", "senderName", "recipientName", "status"]
+    },
+    "TrackingEvent": {
+      "title": "TrackingEvent",
+      "description": "Chronological milestone update for a cargo shipment",
+      "type": "object",
+      "properties": {
+        "shipmentId": { "type": "string" },
+        "trackingNumber": { "type": "string" },
+        "status": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "location": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "recordedBy": { "type": "string" },
+        "recordedByRole": { "type": "string" }
+      },
+      "required": ["shipmentId", "trackingNumber", "status", "title", "location", "timestamp"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Message channel between customer and administrators",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "subAdminId": { "type": "string" },
+        "subAdminName": { "type": "string" },
+        "lastMessage": { "type": "string" },
+        "lastMessageTime": { "type": "string" },
+        "unreadCustomerCount": { "type": "number" },
+        "unreadAdminCount": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["customerId"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Individual message supporting text, photos, video, audio attachments and moderation",
+      "type": "object",
+      "properties": {
+        "conversationId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderRole": { "type": "string", "enum": ["super_admin", "sub_admin", "customer"] },
+        "recipientId": { "type": "string" },
+        "recipientRole": { "type": "string" },
+        "text": { "type": "string", "maxLength": 2000 },
+        "attachmentUrl": { "type": "string" },
+        "attachmentType": { "type": "string", "enum": ["image", "video", "document"] },
+        "attachmentName": { "type": "string" },
+        "moderationStatus": { "type": "string", "enum": ["approved", "pending_moderation", "rejected"] },
+        "rejectionReason": { "type": "string" },
+        "isEdited": { "type": "boolean" },
+        "editedAt": { "type": "string" },
+        "editedBy": { "type": "string" },
+        "originalText": { "type": "string" },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string" },
+        "deletedBy": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["conversationId", "senderId", "senderName", "senderRole", "createdAt"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Customs duty or freight payment transaction",
+      "type": "object",
+      "properties": {
+        "shipmentId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "status": { "type": "string", "enum": ["confirmed", "pending", "failed"] },
+        "reference": { "type": "string" },
+        "receiptUrl": { "type": "string" },
+        "notes": { "type": "string" },
+        "confirmedBy": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["shipmentId", "customerId", "amount", "currency", "status", "reference"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "Global website configuration including message moderation toggle",
+      "type": "object",
+      "properties": {
+        "messageModeration": { "type": "boolean" },
+        "companyName": { "type": "string" },
+        "supportEmail": { "type": "string" },
+        "supportPhone": { "type": "string" },
+        "announcement": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["messageModeration", "companyName"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Administrative actions audit log for compliance and transparency",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "performedBy": { "type": "string" },
+        "performedByRole": { "type": "string" },
+        "targetId": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["action", "performedBy", "performedByRole", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user profile and account details for super admin, sub admin and customers"
+    },
+    "/shipments/{shipmentId}": {
+      "schema": "Shipment",
+      "description": "Stores all cargo shipment records and status"
+    },
+    "/tracking_events/{eventId}": {
+      "schema": "TrackingEvent",
+      "description": "Stores milestone checkpoints for shipments"
+    },
+    "/conversations/{conversationId}": {
+      "schema": "Conversation",
+      "description": "Tracks active messaging threads between customers and staff"
+    },
+    "/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Stores individual chat messages with moderation state and media attachments"
+    },
+    "/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Stores customs duties and fee payment logs"
+    },
+    "/system_settings/{settingId}": {
+      "schema": "SystemSettings",
+      "description": "Stores system configuration such as message moderation state"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Administrative audit trail of sensitive actions"
+    }
+  }
+}
