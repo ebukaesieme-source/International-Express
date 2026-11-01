@@ -135,76 +135,67 @@ export const CustomerDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
-      {/* Top Banner */}
-      <div className="bg-[#0b132b] text-white px-4 sm:px-6 py-4 border-b border-[#1c2541] shadow-md sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center space-x-3">
+      {/* Top Banner - Compact Single Row */}
+      <div className="bg-[#0b132b] text-white px-3 sm:px-6 py-2.5 border-b border-[#1c2541] shadow-md sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
             {/* Top hand corner navigation toggle icon - opens all siders / toggles full screen */}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/30 transition-all flex items-center space-x-2 cursor-pointer shrink-0"
+              className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm transition-all flex items-center space-x-1.5 cursor-pointer shrink-0"
               title={sidebarOpen ? "Full Screen Function (Hide Siders)" : "Click to See All Siders"}
             >
-              <Menu className="w-5 h-5 text-white" />
-              <span>{sidebarOpen ? 'Full Screen' : 'All Siders'}</span>
+              <Menu className="w-4 h-4 text-white" />
+              <span className="hidden sm:inline">{sidebarOpen ? 'Full Screen' : 'All Siders'}</span>
             </button>
 
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-blue-600 flex items-center justify-center font-bold text-base sm:text-lg shadow-md shrink-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm text-white shadow-sm shrink-0">
               {userProfile?.fullName?.charAt(0) || 'C'}
             </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h1 className="text-base sm:text-xl font-black text-white">{userProfile?.fullName}</h1>
-                <span className="px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase">
+            <div className="min-w-0">
+              <div className="flex items-center space-x-1.5 sm:space-x-2">
+                <h1 className="text-xs sm:text-sm font-black text-white truncate">{userProfile?.fullName}</h1>
+                <span className="px-2 py-0.2 rounded-full text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase shrink-0">
                   Verified Consignee
                 </span>
               </div>
-              <p className="text-[11px] sm:text-xs text-gray-400 mt-0.5">
-                Delivery Account: <strong className="text-gray-200">{userProfile?.email}</strong> • {userProfile?.country || 'International'}
+              <p className="text-[10px] sm:text-[11px] text-gray-400 truncate">
+                Delivery Account: <strong className="text-gray-200">{userProfile?.email}</strong> <span className="hidden sm:inline">• {userProfile?.country || 'International'}</span>
               </p>
             </div>
           </div>
 
-          {/* Assigned Sub Admin info card & Top Sign Out */}
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <div className="bg-[#1c2541] border border-gray-700/80 rounded-2xl px-3.5 py-2 flex items-center space-x-2.5 text-xs">
-              <div className="w-7 h-7 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
-                <User className="w-3.5 h-3.5" />
+          {/* Company Support info card & Top Sign Out - Single Row In Order */}
+          <div className="flex items-center space-x-1.5 sm:space-x-2.5 shrink-0">
+            <div className="bg-[#1c2541] border border-gray-700/80 rounded-xl px-2.5 py-1.5 flex items-center space-x-2 text-xs">
+              <div className="w-6 h-6 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+                <Shield className="w-3.5 h-3.5" />
               </div>
-              <div>
-                <div className="text-[9px] uppercase font-bold text-gray-400 tracking-wider">
-                  Assigned Logistics Dispatcher
+              <div className="hidden xs:block text-left">
+                <div className="text-[8px] uppercase font-bold text-gray-400 tracking-wider leading-none">
+                  Company Support
                 </div>
-                {!userProfile?.assignedSubAdminId || userProfile.assignedSubAdminId === '' ? (
-                  <div className="font-bold text-amber-300 text-[11px] flex items-center space-x-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                    <span>Awaiting Dispatcher Acceptance</span>
-                  </div>
-                ) : (
-                  <div className="font-bold text-white text-[11px]">
-                    {userProfile?.assignedSubAdminName}
-                  </div>
-                )}
+                <div className="font-bold text-white text-[11px] leading-tight truncate max-w-[130px] sm:max-w-[180px]">
+                  24/7 Logistics Desk
+                </div>
               </div>
-              {userProfile?.assignedSubAdminId && (
-                <button
-                  onClick={() => setActiveTab('chat')}
-                  className="ml-2 px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer"
-                >
-                  Message
-                </button>
-              )}
+              <button
+                onClick={() => setActiveTab('chat')}
+                className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer shadow-xs"
+                title="Direct Company Support Chat"
+              >
+                Chat Support
+              </button>
             </div>
 
             <button
               onClick={async () => {
                 await logout();
-                window.location.reload();
               }}
-              className="px-3 py-2 rounded-2xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+              className="px-2.5 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
               title="Sign Out"
             >
-              <LogOut className="w-4 h-4 text-red-400" />
+              <LogOut className="w-3.5 h-3.5 text-red-400" />
               <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
@@ -271,7 +262,10 @@ export const CustomerDashboard: React.FC = () => {
             {/* Menu Items */}
             <nav className="flex-1 overflow-y-auto space-y-1 pr-1">
               <button
-                onClick={() => setActiveTab('shipments')}
+                onClick={() => {
+                  setActiveTab('shipments');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeTab === 'shipments'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -288,7 +282,10 @@ export const CustomerDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveTab('track')}
+                onClick={() => {
+                  setActiveTab('track');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeTab === 'track'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -303,7 +300,10 @@ export const CustomerDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveTab('customs')}
+                onClick={() => {
+                  setActiveTab('customs');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeTab === 'customs'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -322,7 +322,10 @@ export const CustomerDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveTab('payment_methods')}
+                onClick={() => {
+                  setActiveTab('payment_methods');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeTab === 'payment_methods'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -336,7 +339,10 @@ export const CustomerDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveTab('chat')}
+                onClick={() => {
+                  setActiveTab('chat');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeTab === 'chat'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -345,12 +351,15 @@ export const CustomerDashboard: React.FC = () => {
               >
                 <div className="flex items-center space-x-2.5 min-w-0">
                   <MessageSquare className="w-4 h-4 shrink-0" />
-                  <span className="truncate">Dispatcher Chat</span>
+                  <span className="truncate">Support Chat</span>
                 </div>
               </button>
 
               <button
-                onClick={() => setActiveTab('activity_logs')}
+                onClick={() => {
+                  setActiveTab('activity_logs');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeTab === 'activity_logs'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -364,7 +373,10 @@ export const CustomerDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveTab('profile')}
+                onClick={() => {
+                  setActiveTab('profile');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeTab === 'profile'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -383,7 +395,6 @@ export const CustomerDashboard: React.FC = () => {
               <button
                 onClick={async () => {
                   await logout();
-                  window.location.reload();
                 }}
                 className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl font-bold text-xs text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
               >
@@ -394,17 +405,17 @@ export const CustomerDashboard: React.FC = () => {
           </aside>
 
         {/* Function Display Area: Displays full screen well when siders are closed */}
-        <main className="flex-1 w-full min-w-0 space-y-6">
-          {/* Helpful quick bar when siders are hidden */}
-          {!sidebarOpen && (
-            <div className="flex items-center justify-between bg-white px-4 py-2.5 rounded-2xl border border-gray-200 shadow-xs">
+        <main className="flex-1 w-full min-w-0 space-y-4 sm:space-y-6">
+          {/* Helpful quick bar when siders are hidden (do NOT show on chat tab so chat card displays fully) */}
+          {!sidebarOpen && activeTab !== 'chat' && (
+            <div className="flex items-center justify-between bg-white px-3.5 py-2 rounded-xl border border-gray-200 shadow-xs">
               <div className="flex items-center space-x-2 text-xs font-bold text-gray-700">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span>Full Screen View Active: <strong className="text-blue-600 uppercase">{activeTab}</strong></span>
               </div>
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer"
+                className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer"
               >
                 <Menu className="w-3.5 h-3.5 text-white" />
                 <span>See All Siders</span>
@@ -414,31 +425,31 @@ export const CustomerDashboard: React.FC = () => {
 
         {/* TAB 1: SHIPMENTS OVERVIEW */}
         {activeTab === 'shipments' && (
-          <div className="space-y-6 animate-fadeIn">
-            {/* Quick Metrics */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs">
-                <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+          <div className="space-y-4 sm:space-y-6 animate-fadeIn">
+            {/* Quick Metrics - Compact & Ordered */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 shadow-xs">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
                   Active in Transit
                 </span>
-                <div className="text-2xl font-black text-blue-600 mt-2">{activeShipments.length}</div>
-                <div className="text-[11px] text-gray-400 mt-1">Air cargo packages en route</div>
+                <div className="text-xl sm:text-2xl font-black text-blue-600 mt-1">{activeShipments.length}</div>
+                <div className="text-[10px] text-gray-400 mt-0.5 truncate">Air cargo packages en route</div>
               </div>
 
-              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs">
-                <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+              <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 shadow-xs">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
                   Completed Deliveries
                 </span>
-                <div className="text-2xl font-black text-emerald-600 mt-2">{deliveredShipments.length}</div>
-                <div className="text-[11px] text-gray-400 mt-1">Successfully signed for</div>
+                <div className="text-xl sm:text-2xl font-black text-emerald-600 mt-1">{deliveredShipments.length}</div>
+                <div className="text-[10px] text-gray-400 mt-0.5 truncate">Successfully signed for</div>
               </div>
 
-              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs">
-                <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+              <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 shadow-xs">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
                   Pending Customs Tariffs
                 </span>
-                <div className="text-2xl font-black text-amber-600 mt-2">${outstandingDuties.toFixed(2)}</div>
-                <div className="text-[11px] text-gray-400 mt-1">Settle to expedite release</div>
+                <div className="text-xl sm:text-2xl font-black text-amber-600 mt-1">${outstandingDuties.toFixed(2)}</div>
+                <div className="text-[10px] text-gray-400 mt-0.5 truncate">Settle to expedite release</div>
               </div>
             </div>
 

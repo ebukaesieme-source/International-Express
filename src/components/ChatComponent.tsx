@@ -267,29 +267,33 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-[650px] max-h-[85vh] bg-slate-50 border border-gray-200 rounded-3xl overflow-hidden shadow-xl">
-      {/* Chat Header */}
-      <div className="bg-[#0b132b] text-white px-5 py-4 flex items-center justify-between border-b border-[#1c2541]">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center font-bold text-sm shadow-inner text-white">
-            {conversation.customerName.charAt(0)}
+    <div className="flex flex-col h-[620px] sm:h-[calc(100vh-140px)] min-h-[560px] max-h-[88vh] bg-slate-50 border border-gray-200 rounded-2xl overflow-hidden shadow-lg w-full">
+      {/* Chat Header - Compact Sleek Header */}
+      <div className="bg-[#0b132b] text-white px-4 sm:px-5 py-2.5 sm:py-3 flex items-center justify-between border-b border-[#1c2541]">
+        <div className="flex items-center space-x-2.5 sm:space-x-3">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-xs sm:text-sm shadow-inner text-white shrink-0">
+            {isCustomer ? <Shield className="w-4 h-4 text-white" /> : conversation.customerName.charAt(0)}
           </div>
           <div>
-            <div className="flex items-center space-x-2">
-              <h3 className="font-bold text-sm tracking-wide">
-                {isCustomer
-                  ? conversation.subAdminName || 'Dedicated Cargo Dispatch Officer'
-                  : conversation.customerName}
+            <div className="flex items-center space-x-1.5 sm:space-x-2">
+              <h3 className="font-bold text-xs sm:text-sm tracking-wide">
+                {isCustomer ? 'Company Support' : conversation.customerName}
               </h3>
-              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                {isCustomer ? 'Logistics Officer' : 'Verified Consignee'}
+              <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.2 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                {isCustomer ? 'Official Support Desk' : 'Verified Consignee'}
               </span>
             </div>
             <p className="text-xs text-gray-400">
-              Channel: <span className="text-blue-400 font-mono">{conversation.id}</span>
-              {conversation.subAdminName && !isSubAdmin && (
-                <span className="ml-2 text-gray-400">
-                  • Assigned Sub-Admin: <strong className="text-gray-200">{conversation.subAdminName}</strong>
+              {isCustomer ? (
+                <span>24/7 Dedicated Logistics Support & Tracking Assistance</span>
+              ) : (
+                <span>
+                  Channel: <span className="text-blue-400 font-mono">{conversation.id}</span>
+                  {conversation.subAdminName && (
+                    <span className="ml-2 text-gray-400">
+                      • Assigned: <strong className="text-gray-200">{conversation.subAdminName}</strong>
+                    </span>
+                  )}
                 </span>
               )}
             </p>
@@ -375,6 +379,11 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             const isSubAdminMsg = msg.senderRole === 'sub_admin';
             const isSuperAdminMsg = msg.senderRole === 'super_admin';
 
+            // When viewed by a customer, ALL messages from super_admin or sub_admin are presented as "Company Support"
+            const displayedSenderName = isCustomer
+              ? (isCustomerMsg ? (currentUserProfile.fullName || 'You') : 'Company Support')
+              : (msg.senderRole === 'customer' ? msg.senderName : (isSuperAdmin ? `${msg.senderName} (${isSuperAdminMsg ? 'Super Admin' : 'Sub Admin'})` : (isMe ? 'You' : msg.senderName)));
+
             return (
               <div
                 key={msg.id}
@@ -382,21 +391,36 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               >
                 {/* Sender Identity & Role Badge */}
                 <div className="flex items-center space-x-1.5 text-[11px] px-1">
-                  <span className="font-bold text-gray-700">{msg.senderName}</span>
-                  {isSuperAdminMsg && (
-                    <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[9px] font-black uppercase border border-amber-300">
-                      Super Admin
-                    </span>
-                  )}
-                  {isSubAdminMsg && (
-                    <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 text-[9px] font-black uppercase border border-blue-200">
-                      Sub Admin
-                    </span>
-                  )}
-                  {isCustomerMsg && (
-                    <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase border border-emerald-200">
-                      Customer
-                    </span>
+                  <span className="font-bold text-gray-700">{displayedSenderName}</span>
+                  {isCustomer ? (
+                    !isCustomerMsg ? (
+                      <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 text-[9px] font-black uppercase border border-blue-200 flex items-center space-x-1">
+                        <Shield className="w-2.5 h-2.5 text-blue-600" />
+                        <span>Company Support</span>
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase border border-emerald-200">
+                        Consignee
+                      </span>
+                    )
+                  ) : (
+                    <>
+                      {isSuperAdminMsg && (
+                        <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[9px] font-black uppercase border border-amber-300">
+                          Super Admin
+                        </span>
+                      )}
+                      {isSubAdminMsg && (
+                        <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 text-[9px] font-black uppercase border border-blue-200">
+                          Sub Admin
+                        </span>
+                      )}
+                      {isCustomerMsg && (
+                        <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase border border-emerald-200">
+                          Customer
+                        </span>
+                      )}
+                    </>
                   )}
                 </div>
 

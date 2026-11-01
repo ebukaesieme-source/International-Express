@@ -7,7 +7,8 @@ import {
   User as FirebaseUser,
   GoogleAuthProvider,
   signInWithPopup,
-  updatePassword
+  updatePassword,
+  updateProfile
 } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import { UserProfile, UserRole } from '../types';
@@ -173,11 +174,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // 2. Check all registered accounts for updated custom password
+    // 2. Check all registered accounts in Firestore database
     try {
       const allUsers = await getAllUsers();
       const match = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
       if (match && match.customPassword && match.customPassword === pass) {
+        // Attempt background Firebase Auth sign-in / registration so Auth user exists
+        try {
+          await signInWithEmailAndPassword(auth, cleanEmail, pass);
+        } catch (e) {
+          try {
+            await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+          } catch (createErr) {
+            // Keep going with profile
+          }
+        }
         sessionStorage.setItem('iec_demo_uid', match.uid);
         sessionStorage.setItem('iec_demo_role', match.role);
         setUserProfile(match);
@@ -185,11 +196,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
     } catch (e) {
-      console.warn('Custom password check:', e);
+      console.warn('Firestore database credential check:', e);
     }
 
+    // 3. Direct Firebase Authentication Sign In
     try {
-      await signInWithEmailAndPassword(auth, cleanEmail, pass);
+      const res = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+      await syncUserProfile(res.user);
+      sessionStorage.setItem('iec_demo_uid', res.user.uid);
+      sessionStorage.setItem('iec_demo_role', 'customer');
+      setLoading(false);
+      return;
     } catch (err: any) {
       // Check sub admin demo accounts or customers
       if (cleanEmail === 'subadmin@expresscargo.com' && pass === 'subadmin12345') {
@@ -255,14 +272,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const registerCustomer = async (data: RegisterData) => {
     setLoading(true);
+    const cleanEmail = data.email.trim().toLowerCase();
+    const cleanPassword = data.password.trim();
+
     try {
       let uid = '';
+
+      // 1. Register email and password directly on Firebase Authentication
       try {
-        const cred = await createUserWithEmailAndPassword(auth, data.email, data.password);
+        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPassword);
         uid = cred.user.uid;
+        if (data.fullName.trim()) {
+          try {
+            await updateProfile(cred.user, { displayName: data.fullName.trim() });
+          } catch (nameErr) {
+            console.warn('Set display name warning:', nameErr);
+          }
+        }
       } catch (authErr: any) {
-        // If Firebase Auth creates error or limits, fallback to deterministic or random unique ID
-        uid = 'cust_' + Date.now();
+        console.warn('Firebase Auth registration:', authErr);
+        if (authErr?.code === 'auth/email-already-in-use') {
+          // Email already exists in Firebase Auth - attempt verification via password
+          try {
+            const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+            uid = cred.user.uid;
+          } catch (signInErr) {
+            throw new Error('This email address is already registered on Firebase. Please sign in or use a different email.');
+          }
+        } else if (authErr?.code === 'auth/weak-password') {
+          throw new Error('Password must be at least 6 characters.');
+        } else if (authErr?.code === 'auth/invalid-email') {
+          throw new Error('Please enter a valid email address.');
+        } else {
+          // Fallback uid if Firebase Auth email provider is disabled or limited
+          uid = 'cust_' + Date.now();
+        }
       }
 
       // Newly registered customers are left unassigned so any Sub Admin can accept the account
@@ -271,15 +315,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const profile: UserProfile = {
         uid,
-        email: data.email,
-        fullName: data.fullName,
+        email: cleanEmail,
+        fullName: data.fullName.trim(),
         role: 'customer',
-        phoneNumber: data.phoneNumber,
-        address: data.address,
-        city: data.city,
-        country: data.country,
-        postalCode: data.postalCode || '',
-        passportId: data.passportId || '',
+        phoneNumber: data.phoneNumber?.trim() || '+1 (555) 000-0000',
+        address: data.address?.trim() || 'Standard Delivery Address',
+        city: data.city?.trim() || 'Gateway City',
+        country: data.country?.trim() || 'United States',
+        postalCode: data.postalCode?.trim() || '',
+        passportId: data.passportId?.trim() || '',
+        customPassword: cleanPassword, // Always preserve in Firestore so login works reliably
         assignedSubAdminId,
         assignedSubAdminName,
         isSuspended: false,
@@ -287,6 +332,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updatedAt: new Date().toISOString(),
       };
 
+      // 2. Persist customer account record to Firestore "users" collection
       await createOrUpdateUserProfile(profile);
       setUserProfile(profile);
       sessionStorage.setItem('iec_demo_uid', uid);
@@ -296,7 +342,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'customer_registered',
         profile.fullName,
         'customer',
-        `New customer account registered: ${profile.fullName} (${profile.email}), Country: ${profile.country}. Awaiting acceptance by any Sub Admin dispatch officer.`,
+        `New customer account registered on Firebase: ${profile.fullName} (${profile.email}), Country: ${profile.country}. Awaiting dispatch station acceptance.`,
         uid
       );
     } finally {

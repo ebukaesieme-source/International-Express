@@ -20,6 +20,7 @@ import {
   ArrowRightLeft,
   FileText,
   Eye,
+  EyeOff,
   Check,
   X,
   Send,
@@ -31,6 +32,9 @@ import {
   History,
   CreditCard,
   Lock,
+  Key,
+  Save,
+  UserCog,
   ExternalLink,
   PanelLeft,
   PanelLeftClose,
@@ -56,6 +60,7 @@ import {
   getSubAdmins,
   getCustomers,
   createOrUpdateUserProfile,
+  updateUserPassword,
   updateUserSuspension,
   transferCustomer,
   deleteUser,
@@ -80,7 +85,7 @@ import {
 import { ChatComponent } from '../components/ChatComponent';
 
 export const SuperAdminDashboard: React.FC = () => {
-  const { userProfile, logout } = useAuth();
+  const { userProfile, logout, changeSuperAdminPassword, updateSuperAdminProfile } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : false
   );
@@ -125,9 +130,49 @@ export const SuperAdminDashboard: React.FC = () => {
     notes: ''
   });
 
-  const [showEditUserModal, setShowEditUserModal] = useState<UserProfile | null>(null);
+  const [showAdminSecurityModal, setShowAdminSecurityModal] = useState(false);
+  const [adminProfileForm, setAdminProfileForm] = useState({
+    fullName: userProfile?.fullName || 'Executive Super Administrator',
+    email: userProfile?.email || 'admin@gmail.com',
+    phoneNumber: userProfile?.phoneNumber || '+1 (800) 999-CARGO',
+    address: userProfile?.address || 'One World Cargo Center, JFK Airport',
+    city: userProfile?.city || 'New York',
+    country: userProfile?.country || 'United States',
+    notes: userProfile?.notes || 'Supreme Logistics Authority'
+  });
+  const [newAdminPassword, setNewAdminPassword] = useState('');
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState('');
+  const [showAdminPassText, setShowAdminPassText] = useState(false);
+  const [securityStatusMsg, setSecurityStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSavingSecurity, setIsSavingSecurity] = useState(false);
+
+  // User Edit & Password Reset Modal states (for Sub-Admins & Customers)
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+  const [editUserForm, setEditUserForm] = useState({
+    fullName: '',
+    email: '',
+    phoneNumber: '',
+    address: '',
+    city: '',
+    country: '',
+    notes: '',
+    newPassword: ''
+  });
+  const [showUserPassText, setShowUserPassText] = useState(false);
+  const [savingEditUser, setSavingEditUser] = useState(false);
+
   const [showTransferModal, setShowTransferModal] = useState<UserProfile | null>(null);
   const [transferTargetSubAdmin, setTransferTargetSubAdmin] = useState('');
+
+  // Delete User Confirmation Modal & Toast states
+  const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
+  const [toastNotification, setToastNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
+    setToastNotification({ text, type });
+    setTimeout(() => setToastNotification(null), 4000);
+  };
 
   // Shipment Create / Edit Modal
   const [showShipmentModal, setShowShipmentModal] = useState(false);
@@ -271,6 +316,126 @@ export const SuperAdminDashboard: React.FC = () => {
     }
   };
 
+  // Save Super Admin Profile Changes
+  const handleSaveAdminProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingSecurity(true);
+    setSecurityStatusMsg(null);
+    try {
+      await updateSuperAdminProfile({
+        fullName: adminProfileForm.fullName.trim(),
+        email: adminProfileForm.email.trim().toLowerCase(),
+        phoneNumber: adminProfileForm.phoneNumber.trim(),
+        address: adminProfileForm.address.trim(),
+        city: adminProfileForm.city.trim(),
+        country: adminProfileForm.country.trim(),
+        notes: adminProfileForm.notes.trim()
+      });
+      setSecurityStatusMsg({ type: 'success', text: 'Administrative profile details updated successfully!' });
+      await loadAllData();
+    } catch (err: any) {
+      console.error(err);
+      setSecurityStatusMsg({ type: 'error', text: err.message || 'Failed to update administrative profile.' });
+    } finally {
+      setIsSavingSecurity(false);
+    }
+  };
+
+  // Change Super Admin Security Password
+  const handleChangeAdminPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminPassword) {
+      setSecurityStatusMsg({ type: 'error', text: 'Please enter your new password.' });
+      return;
+    }
+    if (newAdminPassword.length < 6) {
+      setSecurityStatusMsg({ type: 'error', text: 'New password must contain at least 6 characters.' });
+      return;
+    }
+    if (newAdminPassword !== confirmAdminPassword) {
+      setSecurityStatusMsg({ type: 'error', text: 'Passwords do not match. Please re-enter identical passwords.' });
+      return;
+    }
+
+    setIsSavingSecurity(true);
+    setSecurityStatusMsg(null);
+    try {
+      await changeSuperAdminPassword(newAdminPassword);
+      setSecurityStatusMsg({
+        type: 'success',
+        text: 'Administrative password updated successfully! You can now use this new password on your next sign-in.'
+      });
+      setNewAdminPassword('');
+      setConfirmAdminPassword('');
+      await loadAllData();
+    } catch (err: any) {
+      console.error(err);
+      setSecurityStatusMsg({ type: 'error', text: err.message || 'Failed to update administrative password.' });
+    } finally {
+      setIsSavingSecurity(false);
+    }
+  };
+
+  // Open Edit User modal (Sub Admin or Customer)
+  const handleOpenEditUser = (user: UserProfile) => {
+    setEditingUser(user);
+    setEditUserForm({
+      fullName: user.fullName || '',
+      email: user.email || '',
+      phoneNumber: user.phoneNumber || user.phone || '',
+      address: user.address || '',
+      city: user.city || '',
+      country: user.country || 'United States',
+      notes: user.notes || '',
+      newPassword: user.customPassword || ''
+    });
+  };
+
+  // Save Edited User (Sub Admin or Customer) with optional new password
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setSavingEditUser(true);
+    try {
+      const updates: Partial<UserProfile> = {
+        fullName: editUserForm.fullName.trim(),
+        email: editUserForm.email.trim().toLowerCase(),
+        phoneNumber: editUserForm.phoneNumber.trim(),
+        address: editUserForm.address.trim(),
+        city: editUserForm.city.trim(),
+        country: editUserForm.country.trim(),
+        notes: editUserForm.notes.trim()
+      };
+
+      if (editUserForm.newPassword.trim()) {
+        updates.customPassword = editUserForm.newPassword.trim();
+        await updateUserPassword(editingUser.uid, editUserForm.newPassword.trim());
+      }
+
+      await createOrUpdateUserProfile({
+        ...updates,
+        uid: editingUser.uid
+      });
+
+      await addAuditLog(
+        'user_account_edited',
+        userProfile?.fullName || 'Super Admin',
+        'super_admin',
+        `Super Admin updated ${editingUser.role} profile for ${editUserForm.fullName} (${editUserForm.email}). ${editUserForm.newPassword ? 'Password was also updated/reset.' : ''}`,
+        editingUser.uid
+      );
+
+      setEditingUser(null);
+      await loadAllData();
+      showToast(`Account details for ${editUserForm.fullName} updated successfully!`);
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to update user account.', 'error');
+    } finally {
+      setSavingEditUser(false);
+    }
+  };
+
   // Toggle user suspension
   const handleToggleSuspension = async (user: UserProfile) => {
     const nextState = !user.isSuspended;
@@ -282,28 +447,43 @@ export const SuperAdminDashboard: React.FC = () => {
         'super_admin',
         `${nextState ? 'Suspended' : 'Reactivated'} account for ${user.fullName} (${user.role})`
       );
+      setCustomers(prev => prev.map(c => c.uid === user.uid ? { ...c, isSuspended: nextState } : c));
+      setSubAdmins(prev => prev.map(s => s.uid === user.uid ? { ...s, isSuspended: nextState } : s));
+      showToast(`Account for ${user.fullName} is now ${nextState ? 'Suspended' : 'Reactivated'}.`);
       loadAllData();
     } catch (err) {
       console.error(err);
-      alert('Failed to update account status.');
+      showToast('Failed to update account status.', 'error');
     }
   };
 
-  // Delete user
-  const handleDeleteUser = async (user: UserProfile) => {
-    if (!confirm(`Are you sure you want to permanently delete account ${user.fullName}?`)) return;
+  // Delete user trigger (opens dedicated in-app confirmation modal)
+  const handleDeleteUser = (user: UserProfile) => {
+    setUserToDelete(user);
+  };
+
+  // Confirm delete user execution
+  const handleConfirmDeleteUser = async () => {
+    if (!userToDelete) return;
+    setIsDeletingUser(true);
     try {
-      await deleteUser(user.uid);
+      await deleteUser(userToDelete.uid);
       await addAuditLog(
         'account_deleted',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
-        `Deleted ${user.role} account for ${user.fullName} (${user.email})`
+        `Permanently deleted ${userToDelete.role} account for ${userToDelete.fullName} (${userToDelete.email})`
       );
+      setCustomers(prev => prev.filter(c => c.uid !== userToDelete.uid));
+      setSubAdmins(prev => prev.filter(s => s.uid !== userToDelete.uid));
+      showToast(`Account for ${userToDelete.fullName} permanently deleted.`);
+      setUserToDelete(null);
       loadAllData();
     } catch (err) {
       console.error(err);
-      alert('Failed to delete user.');
+      showToast('Failed to delete user account.', 'error');
+    } finally {
+      setIsDeletingUser(false);
     }
   };
 
@@ -327,13 +507,19 @@ export const SuperAdminDashboard: React.FC = () => {
         `Transferred customer ${showTransferModal.fullName} from previous assignment to Sub Admin ${targetSub.fullName}`
       );
 
+      setCustomers(prev => prev.map(c => c.uid === showTransferModal.uid ? {
+        ...c,
+        assignedSubAdminId: targetSub.uid,
+        assignedSubAdminName: targetSub.fullName
+      } : c));
+
       setShowTransferModal(null);
       setTransferTargetSubAdmin('');
       loadAllData();
-      alert(`Customer ${showTransferModal.fullName} reassigned to ${targetSub.fullName}.`);
+      showToast(`Customer ${showTransferModal.fullName} reassigned to ${targetSub.fullName}.`);
     } catch (err) {
       console.error(err);
-      alert('Failed to transfer customer.');
+      showToast('Failed to transfer customer.', 'error');
     }
   };
 
@@ -519,67 +705,93 @@ export const SuperAdminDashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
       {/* Top Super Admin Command Banner */}
-      <div className="bg-[#0b132b] text-white px-4 sm:px-6 py-4 border-b border-[#1c2541] shadow-md flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40">
-        <div className="flex items-center space-x-3">
+      <div className="bg-[#0b132b] text-white px-3 sm:px-6 py-2.5 border-b border-[#1c2541] shadow-md flex items-center justify-between gap-2 sm:gap-4 sticky top-0 z-40">
+        <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
           {/* Top hand corner navigation toggle icon - opens all siders / toggles full screen */}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/30 transition-all flex items-center space-x-2 cursor-pointer shrink-0"
+            className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm transition-all flex items-center space-x-1.5 cursor-pointer shrink-0"
             title={sidebarOpen ? "Full Screen Function (Hide Siders)" : "Click to See All Siders"}
           >
-            <Menu className="w-5 h-5 text-white" />
-            <span>{sidebarOpen ? 'Full Screen' : 'All Siders'}</span>
+            <Menu className="w-4 h-4 text-white" />
+            <span className="hidden sm:inline">{sidebarOpen ? 'Full Screen' : 'All Siders'}</span>
           </button>
 
-          <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
-            <Shield className="w-5 h-5 sm:w-6 sm:h-6" />
+          <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
+            <Shield className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h1 className="text-base sm:text-xl font-black tracking-tight text-white">Super Admin Command Center</h1>
-              <span className="px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold uppercase bg-amber-400 text-gray-950 tracking-wider">
+          <div className="min-w-0">
+            <div className="flex items-center space-x-1.5 sm:space-x-2">
+              <h1 className="text-xs sm:text-sm font-black tracking-tight text-white truncate">Super Admin Command Center</h1>
+              <span className="px-2 py-0.2 rounded-full text-[9px] font-extrabold uppercase bg-amber-400 text-gray-950 tracking-wider shrink-0">
                 Full Control
               </span>
             </div>
-            <p className="text-[11px] sm:text-xs text-gray-400">
-              Authenticated: <strong className="text-white">{userProfile?.fullName}</strong> ({userProfile?.email})
+            <p className="text-[10px] sm:text-[11px] text-gray-400 truncate">
+              Authenticated: <strong className="text-white">{userProfile?.fullName || 'Super Admin'}</strong> <span className="hidden md:inline">({userProfile?.email})</span>
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2 sm:space-x-3">
-          {/* Moderation Toggle Quick Button */}
+        {/* Right Functions Cluster - Arranged in clean logical order without duplication */}
+        <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+          {/* Function 1: Change Password & Edit Admin Profile */}
+          <button
+            onClick={() => {
+              setShowAdminSecurityModal(true);
+              setAdminProfileForm({
+                fullName: userProfile?.fullName || 'Executive Super Administrator',
+                email: userProfile?.email || 'admin@gmail.com',
+                phoneNumber: userProfile?.phoneNumber || '+1 (800) 999-CARGO',
+                address: userProfile?.address || 'One World Cargo Center, JFK Airport',
+                city: userProfile?.city || 'New York',
+                country: userProfile?.country || 'United States',
+                notes: userProfile?.notes || 'Supreme Logistics Authority'
+              });
+              setSecurityStatusMsg(null);
+            }}
+            className="px-2.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-gray-950 text-xs font-bold flex items-center space-x-1.5 shadow-sm transition-all cursor-pointer"
+            title="Change Super Admin Password & Edit Profile"
+          >
+            <Key className="w-3.5 h-3.5 text-gray-950" />
+            <span className="hidden sm:inline">Change Password & Edit</span>
+            <span className="sm:hidden">Edit</span>
+          </button>
+
+          {/* Function 2: Moderation Toggle Quick Button */}
           <button
             onClick={handleToggleModeration}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-2 border transition-colors cursor-pointer ${
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 border transition-colors cursor-pointer ${
               settings?.messageModeration
                 ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
                 : 'bg-gray-800 text-gray-400 border-gray-700 hover:text-white'
             }`}
+            title="Toggle Global Customer Message Moderation"
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Message Moderation: {settings?.messageModeration ? 'ON' : 'OFF'}</span>
-            <span className="md:hidden">Mod: {settings?.messageModeration ? 'ON' : 'OFF'}</span>
+            <span className="hidden md:inline">Moderation: {settings?.messageModeration ? 'ON' : 'OFF'}</span>
+            <span className="md:hidden">{settings?.messageModeration ? 'Mod ON' : 'Mod OFF'}</span>
           </button>
 
+          {/* Function 3: Refresh System Data */}
           <button
             onClick={loadAllData}
             disabled={loading}
-            className="p-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors cursor-pointer"
             title="Refresh System Data"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
 
+          {/* Function 4: Sign Out */}
           <button
             onClick={async () => {
               await logout();
-              window.location.reload();
             }}
-            className="px-3 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+            className="px-2.5 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
             title="Sign Out"
           >
-            <LogOut className="w-4 h-4 text-red-400" />
+            <LogOut className="w-3.5 h-3.5 text-red-400" />
             <span className="hidden sm:inline">Sign Out</span>
           </button>
         </div>
@@ -628,7 +840,10 @@ export const SuperAdminDashboard: React.FC = () => {
             {/* Vertical Menu Items list */}
             <nav className="flex-1 overflow-y-auto space-y-1 pr-1">
               <button
-                onClick={() => setActiveSection('overview')}
+                onClick={() => {
+                  setActiveSection('overview');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeSection === 'overview'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -643,7 +858,10 @@ export const SuperAdminDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveSection('shipments')}
+                onClick={() => {
+                  setActiveSection('shipments');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeSection === 'shipments'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -660,7 +878,10 @@ export const SuperAdminDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveSection('subadmins')}
+                onClick={() => {
+                  setActiveSection('subadmins');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeSection === 'subadmins'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -677,7 +898,10 @@ export const SuperAdminDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveSection('customers')}
+                onClick={() => {
+                  setActiveSection('customers');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeSection === 'customers'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -694,7 +918,10 @@ export const SuperAdminDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveSection('moderation')}
+                onClick={() => {
+                  setActiveSection('moderation');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeSection === 'moderation'
                     ? 'bg-amber-600 text-white shadow-xs'
@@ -713,7 +940,10 @@ export const SuperAdminDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveSection('messages')}
+                onClick={() => {
+                  setActiveSection('messages');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeSection === 'messages'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -730,7 +960,10 @@ export const SuperAdminDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveSection('payments')}
+                onClick={() => {
+                  setActiveSection('payments');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeSection === 'payments'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -749,7 +982,10 @@ export const SuperAdminDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveSection('payment_methods')}
+                onClick={() => {
+                  setActiveSection('payment_methods');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeSection === 'payment_methods'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -763,7 +999,10 @@ export const SuperAdminDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveSection('audit')}
+                onClick={() => {
+                  setActiveSection('audit');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeSection === 'audit'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -780,7 +1019,10 @@ export const SuperAdminDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveSection('settings')}
+                onClick={() => {
+                  setActiveSection('settings');
+                  setSidebarOpen(false);
+                }}
                 className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
                   activeSection === 'settings'
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -799,7 +1041,6 @@ export const SuperAdminDashboard: React.FC = () => {
               <button
                 onClick={async () => {
                   await logout();
-                  window.location.reload();
                 }}
                 className="w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl font-bold text-xs text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
               >
@@ -830,62 +1071,62 @@ export const SuperAdminDashboard: React.FC = () => {
           {/* SECTION 1: OVERVIEW METRICS */}
           {activeSection === 'overview' && (
             <div className="space-y-6 animate-fadeIn">
-              {/* Comprehensive Stat Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs">
+              {/* Comprehensive Stat Cards - Compact & Ordered */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 shadow-xs">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
                       Total Customers
                     </span>
-                    <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
-                      <UserCheck className="w-5 h-5" />
+                    <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600">
+                      <UserCheck className="w-4 h-4" />
                     </div>
                   </div>
-                  <div className="text-2xl font-black text-gray-900 mt-2">{totalCustomers}</div>
-                  <div className="text-[11px] text-gray-400 mt-1">Registered consignees in database</div>
+                  <div className="text-xl sm:text-2xl font-black text-gray-900 mt-1">{totalCustomers}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5 truncate">Registered consignees</div>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs">
+                <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 shadow-xs">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                      Sub Admin Accounts
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                      Sub Admins
                     </span>
-                    <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
-                      <Users className="w-5 h-5" />
+                    <div className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600">
+                      <Users className="w-4 h-4" />
                     </div>
                   </div>
-                  <div className="text-2xl font-black text-gray-900 mt-2">{totalSubAdmins}</div>
-                  <div className="text-[11px] text-gray-400 mt-1">Regional dispatch managers</div>
+                  <div className="text-xl sm:text-2xl font-black text-gray-900 mt-1">{totalSubAdmins}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5 truncate">Dispatch managers</div>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs">
+                <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 shadow-xs">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
                       Active Shipments
                     </span>
-                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
-                      <Truck className="w-5 h-5" />
+                    <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600">
+                      <Truck className="w-4 h-4" />
                     </div>
                   </div>
-                  <div className="text-2xl font-black text-gray-900 mt-2">{activeShipments}</div>
-                  <div className="text-[11px] text-gray-400 mt-1">
-                    {deliveredShipments} Delivered • {pendingShipments} Pending
+                  <div className="text-xl sm:text-2xl font-black text-gray-900 mt-1">{activeShipments}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5 truncate">
+                    {deliveredShipments} Deliv • {pendingShipments} Pend
                   </div>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-xs">
+                <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200 shadow-xs">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
                       Outstanding Duties
                     </span>
-                    <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
-                      <DollarSign className="w-5 h-5" />
+                    <div className="p-1.5 rounded-lg bg-amber-50 text-amber-600">
+                      <DollarSign className="w-4 h-4" />
                     </div>
                   </div>
-                  <div className="text-2xl font-black text-amber-600 mt-2">
+                  <div className="text-xl sm:text-2xl font-black text-amber-600 mt-1">
                     ${outstandingDutyTotal.toLocaleString()}
                   </div>
-                  <div className="text-[11px] text-gray-400 mt-1">Pending customs tariffs</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5 truncate">Pending customs tariffs</div>
                 </div>
               </div>
 
@@ -1073,6 +1314,14 @@ export const SuperAdminDashboard: React.FC = () => {
                           </td>
                           <td className="py-3.5 px-4 text-right space-x-2">
                             <button
+                              onClick={() => handleOpenEditUser(sub)}
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 cursor-pointer inline-flex items-center space-x-1 transition-colors"
+                              title="Edit Sub Admin details and set password"
+                            >
+                              <Edit className="w-3 h-3" />
+                              <span>Edit & Password</span>
+                            </button>
+                            <button
                               onClick={() => handleToggleSuspension(sub)}
                               className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
                                 sub.isSuspended
@@ -1177,58 +1426,101 @@ export const SuperAdminDashboard: React.FC = () => {
                                 {custShipments.length} Cargo Consignment(s)
                               </span>
                             </td>
-                            <td className="py-3.5 px-4 text-right space-x-2">
-                              {isUnassigned ? (
+                            <td className="py-3.5 px-4 text-right">
+                              <div className="flex items-center justify-end flex-wrap gap-1.5">
+                                {/* 1. Edit & Pass */}
                                 <button
-                                  onClick={() => {
-                                    setShowTransferModal(cust);
-                                    setTransferTargetSubAdmin(subAdmins[0]?.uid || '');
-                                  }}
-                                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white cursor-pointer inline-flex items-center space-x-1 shadow-xs transition-colors"
+                                  onClick={() => handleOpenEditUser(cust)}
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 cursor-pointer inline-flex items-center space-x-1 transition-colors"
+                                  title="Edit Customer profile and set password"
                                 >
-                                  <UserPlus className="w-3 h-3" />
-                                  <span>Assign Sub Admin</span>
+                                  <Edit className="w-3 h-3" />
+                                  <span>Edit & Pass</span>
                                 </button>
-                              ) : (
+
+                                {/* 2. Suspend / Reactivate */}
                                 <button
-                                  onClick={() => {
-                                    setShowTransferModal(cust);
-                                    setTransferTargetSubAdmin(subAdmins[0]?.uid || '');
-                                  }}
-                                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 cursor-pointer inline-flex items-center space-x-1 transition-colors"
+                                  onClick={() => handleToggleSuspension(cust)}
+                                  className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer border ${
+                                    cust.isSuspended
+                                      ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200'
+                                      : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200'
+                                  }`}
+                                  title={cust.isSuspended ? "Reactivate customer account" : "Suspend customer account"}
                                 >
-                                  <ArrowRightLeft className="w-3 h-3" />
-                                  <span>Transfer</span>
+                                  {cust.isSuspended ? 'Reactivate' : 'Suspend'}
                                 </button>
-                              )}
-                              <button
-                                onClick={async () => {
-                                  try {
-                                    let conv = conversations.find(c => c.customerId === cust.uid);
-                                    if (!conv) {
-                                      conv = await getOrCreateConversation(
-                                        cust.uid,
-                                        cust.fullName,
-                                        cust.email,
-                                        cust.assignedSubAdminId,
-                                        cust.assignedSubAdminName
-                                      );
-                                      if (conv) {
-                                        setConversations(prev => [...prev, conv!]);
+
+                                {/* 3. Delete Customer Button */}
+                                <button
+                                  onClick={() => handleDeleteUser(cust)}
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 cursor-pointer inline-flex items-center space-x-1 transition-colors"
+                                  title="Permanently Delete Customer Account"
+                                >
+                                  <Trash2 className="w-3 h-3 text-red-600" />
+                                  <span>Delete</span>
+                                </button>
+
+                                {/* 4. Assign / Transfer */}
+                                {isUnassigned ? (
+                                  <button
+                                    onClick={() => {
+                                      setShowTransferModal(cust);
+                                      setTransferTargetSubAdmin(subAdmins[0]?.uid || '');
+                                    }}
+                                    className="px-2 py-1 rounded-lg text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white cursor-pointer inline-flex items-center space-x-1 shadow-xs transition-colors"
+                                    title="Assign to a Sub Admin"
+                                  >
+                                    <UserPlus className="w-3 h-3" />
+                                    <span>Assign Sub Admin</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      setShowTransferModal(cust);
+                                      setTransferTargetSubAdmin(subAdmins[0]?.uid || '');
+                                    }}
+                                    className="px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 cursor-pointer inline-flex items-center space-x-1 transition-colors"
+                                    title="Transfer to another Sub Admin"
+                                  >
+                                    <ArrowRightLeft className="w-3 h-3" />
+                                    <span>Transfer</span>
+                                  </button>
+                                )}
+
+                                {/* 5. Chat */}
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      let conv = conversations.find(c => c.customerId === cust.uid);
+                                      if (!conv) {
+                                        conv = await getOrCreateConversation(
+                                          cust.uid,
+                                          cust.fullName,
+                                          cust.email,
+                                          cust.assignedSubAdminId,
+                                          cust.assignedSubAdminName
+                                        );
+                                        if (conv) {
+                                          setConversations(prev => [...prev, conv!]);
+                                        }
                                       }
+                                      if (conv) {
+                                        setActiveChatConversation(conv);
+                                        setActiveSection('messages');
+                                      }
+                                    } catch (err) {
+                                      console.error(err);
+                                      showToast('Could not initialize conversation channel.', 'error');
                                     }
-                                    if (conv) {
-                                      setActiveChatConversation(conv);
-                                    }
-                                  } catch (err) {
-                                    console.error(err);
-                                    alert('Could not initialize conversation channel.');
-                                  }
-                                }}
-                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 text-gray-700 hover:bg-slate-200 cursor-pointer transition-colors"
-                              >
-                                Chat
-                              </button>
+                                  }}
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold bg-slate-100 text-gray-700 hover:bg-slate-200 border border-gray-200 cursor-pointer transition-colors inline-flex items-center space-x-1"
+                                  title="Open live chat with customer"
+                                >
+                                  <MessageSquare className="w-3 h-3 text-gray-500" />
+                                  <span>Chat</span>
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1692,6 +1984,202 @@ export const SuperAdminDashboard: React.FC = () => {
                 <p className="text-xs text-gray-500">
                   Configure corporate carrier identity, contact endpoints, and customer message moderation.
                 </p>
+              </div>
+
+              {/* Super Admin Security & Credentials Settings */}
+              <div className="bg-gradient-to-r from-slate-900 to-[#1c2541] text-white p-6 rounded-3xl shadow-xl space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-700/60">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-2xl bg-amber-400 text-gray-950 flex items-center justify-center font-black shadow-md shrink-0">
+                      <Key className="w-5 h-5 text-gray-950" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-black text-white">Super Admin Security & Profile Control</h3>
+                      <p className="text-xs text-gray-300">
+                        Update administrative credentials, change master password, and edit command center details.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/40 w-fit">
+                    Full Administrative Authority
+                  </span>
+                </div>
+
+                {/* Status Alert if present */}
+                {securityStatusMsg && (
+                  <div className={`p-4 rounded-2xl text-xs font-bold flex items-center space-x-2 ${
+                    securityStatusMsg.type === 'success'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                  }`}>
+                    {securityStatusMsg.type === 'success' ? (
+                      <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                    )}
+                    <span>{securityStatusMsg.text}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Left Column: Change Password */}
+                  <div className="bg-[#12192e] p-5 rounded-2xl border border-gray-700/60 space-y-4">
+                    <div className="flex items-center space-x-2 pb-2 border-b border-gray-800">
+                      <Lock className="w-4 h-4 text-amber-400" />
+                      <h4 className="text-sm font-extrabold text-white">Change Administrative Password</h4>
+                    </div>
+
+                    <form onSubmit={handleChangeAdminPassword} className="space-y-3.5">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-300 mb-1">
+                          New Security Password *
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showAdminPassText ? "text" : "password"}
+                            required
+                            value={newAdminPassword}
+                            onChange={(e) => setNewAdminPassword(e.target.value)}
+                            placeholder="Enter minimum 6 characters"
+                            className="w-full px-3.5 py-2.5 bg-slate-900 border border-gray-700 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-amber-400 font-mono"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowAdminPassText(!showAdminPassText)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                          >
+                            {showAdminPassText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-gray-300 mb-1">
+                          Confirm New Password *
+                        </label>
+                        <input
+                          type={showAdminPassText ? "text" : "password"}
+                          required
+                          value={confirmAdminPassword}
+                          onChange={(e) => setConfirmAdminPassword(e.target.value)}
+                          placeholder="Re-enter new password"
+                          className="w-full px-3.5 py-2.5 bg-slate-900 border border-gray-700 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-amber-400 font-mono"
+                        />
+                      </div>
+
+                      <div className="pt-2">
+                        <button
+                          type="submit"
+                          disabled={isSavingSecurity}
+                          className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-gray-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
+                        >
+                          <Key className="w-4 h-4 text-gray-950" />
+                          <span>{isSavingSecurity ? 'Updating Password...' : 'Save New Password'}</span>
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-gray-400 text-center">
+                        Upon saving, this password takes effect immediately for all subsequent sign-ins.
+                      </p>
+                    </form>
+                  </div>
+
+                  {/* Right Column: Edit Profile */}
+                  <div className="bg-[#12192e] p-5 rounded-2xl border border-gray-700/60 space-y-4">
+                    <div className="flex items-center space-x-2 pb-2 border-b border-gray-800">
+                      <UserCog className="w-4 h-4 text-blue-400" />
+                      <h4 className="text-sm font-extrabold text-white">Edit Administrator Profile</h4>
+                    </div>
+
+                    <form onSubmit={handleSaveAdminProfile} className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-300 mb-1">
+                          Full Name *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={adminProfileForm.fullName}
+                          onChange={(e) => setAdminProfileForm({ ...adminProfileForm, fullName: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-900 border border-gray-700 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-400"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-xs font-bold text-gray-300 mb-1">
+                            Email Address *
+                          </label>
+                          <input
+                            type="email"
+                            required
+                            value={adminProfileForm.email}
+                            onChange={(e) => setAdminProfileForm({ ...adminProfileForm, email: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-900 border border-gray-700 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-gray-300 mb-1">
+                            Phone Number
+                          </label>
+                          <input
+                            type="text"
+                            value={adminProfileForm.phoneNumber}
+                            onChange={(e) => setAdminProfileForm({ ...adminProfileForm, phoneNumber: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-900 border border-gray-700 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-400"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-xs font-bold text-gray-300 mb-1">
+                            City & Hub
+                          </label>
+                          <input
+                            type="text"
+                            value={adminProfileForm.city}
+                            onChange={(e) => setAdminProfileForm({ ...adminProfileForm, city: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-900 border border-gray-700 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-gray-300 mb-1">
+                            Country
+                          </label>
+                          <input
+                            type="text"
+                            value={adminProfileForm.country}
+                            onChange={(e) => setAdminProfileForm({ ...adminProfileForm, country: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-900 border border-gray-700 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-400"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-gray-300 mb-1">
+                          Headquarters Address
+                        </label>
+                        <input
+                          type="text"
+                          value={adminProfileForm.address}
+                          onChange={(e) => setAdminProfileForm({ ...adminProfileForm, address: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-900 border border-gray-700 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-400"
+                        />
+                      </div>
+
+                      <div className="pt-2">
+                        <button
+                          type="submit"
+                          disabled={isSavingSecurity}
+                          className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
+                        >
+                          <Save className="w-4 h-4" />
+                          <span>{isSavingSecurity ? 'Saving Changes...' : 'Save Profile Details'}</span>
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-6 max-w-2xl">
@@ -2170,6 +2658,410 @@ export const SuperAdminDashboard: React.FC = () => {
               onClose={() => setActiveChatConversation(null)}
             />
           </div>
+        </div>
+      )}
+
+      {/* QUICK SUPER ADMIN PASSWORD CHANGE & PROFILE EDIT MODAL */}
+      {showAdminSecurityModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-gray-100 my-8 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-md shadow-amber-500/20">
+                  <Key className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-gray-900">Super Admin Security & Profile</h3>
+                  <p className="text-xs text-gray-500">Update your administrative credentials and official details</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowAdminSecurityModal(false);
+                  setSecurityStatusMsg(null);
+                }}
+                className="p-2 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {securityStatusMsg && (
+              <div
+                className={`mt-4 p-3 rounded-2xl text-xs font-bold flex items-center space-x-2 ${
+                  securityStatusMsg.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    : 'bg-red-50 text-red-800 border border-red-200'
+                }`}
+              >
+                {securityStatusMsg.type === 'success' ? (
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                )}
+                <span>{securityStatusMsg.text}</span>
+              </div>
+            )}
+
+            {/* Change Password Form */}
+            <form onSubmit={handleChangeAdminPassword} className="mt-5 p-4 rounded-2xl bg-slate-50 border border-gray-200/80 space-y-3">
+              <div className="flex items-center space-x-2 text-xs font-extrabold text-gray-900">
+                <Lock className="w-4 h-4 text-amber-500" />
+                <span>Change Administrator Password</span>
+              </div>
+              <p className="text-[11px] text-gray-500">
+                Set a new password for <strong className="text-gray-800">{userProfile?.email}</strong>. This updates your login credentials immediately.
+              </p>
+
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">New Password (min 6 chars)</label>
+                  <div className="relative">
+                    <input
+                      type={showAdminPassText ? 'text' : 'password'}
+                      value={newAdminPassword}
+                      onChange={(e) => setNewAdminPassword(e.target.value)}
+                      placeholder="Enter new strong password"
+                      className="w-full px-3 py-2 pr-10 bg-white border border-gray-200 rounded-xl text-xs font-semibold focus:outline-blue-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAdminPassText(!showAdminPassText)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+                    >
+                      {showAdminPassText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Confirm New Password</label>
+                  <input
+                    type={showAdminPassText ? 'text' : 'password'}
+                    value={confirmAdminPassword}
+                    onChange={(e) => setConfirmAdminPassword(e.target.value)}
+                    placeholder="Confirm new password"
+                    className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-semibold focus:outline-blue-600"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="submit"
+                  disabled={isSavingSecurity || !newAdminPassword}
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-gray-950 text-xs font-black flex items-center space-x-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  <span>{isSavingSecurity ? 'Updating Password...' : 'Save New Password'}</span>
+                </button>
+              </div>
+            </form>
+
+            {/* Edit Profile Form */}
+            <form onSubmit={handleSaveAdminProfile} className="mt-5 p-4 rounded-2xl bg-slate-50 border border-gray-200/80 space-y-3">
+              <div className="flex items-center space-x-2 text-xs font-extrabold text-gray-900">
+                <UserCog className="w-4 h-4 text-blue-600" />
+                <span>Edit Administrator Profile Details</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    value={adminProfileForm.fullName}
+                    onChange={(e) => setAdminProfileForm({ ...adminProfileForm, fullName: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs focus:outline-blue-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Admin Email</label>
+                  <input
+                    type="email"
+                    value={adminProfileForm.email}
+                    onChange={(e) => setAdminProfileForm({ ...adminProfileForm, email: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs focus:outline-blue-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    value={adminProfileForm.phoneNumber}
+                    onChange={(e) => setAdminProfileForm({ ...adminProfileForm, phoneNumber: e.target.value })}
+                    className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs focus:outline-blue-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">City</label>
+                  <input
+                    type="text"
+                    value={adminProfileForm.city}
+                    onChange={(e) => setAdminProfileForm({ ...adminProfileForm, city: e.target.value })}
+                    className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs focus:outline-blue-600"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Office / Operations Address</label>
+                  <input
+                    type="text"
+                    value={adminProfileForm.address}
+                    onChange={(e) => setAdminProfileForm({ ...adminProfileForm, address: e.target.value })}
+                    className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs focus:outline-blue-600"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Country</label>
+                  <input
+                    type="text"
+                    value={adminProfileForm.country}
+                    onChange={(e) => setAdminProfileForm({ ...adminProfileForm, country: e.target.value })}
+                    className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs focus:outline-blue-600"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Administrative Notes / Bio</label>
+                  <textarea
+                    rows={2}
+                    value={adminProfileForm.notes}
+                    onChange={(e) => setAdminProfileForm({ ...adminProfileForm, notes: e.target.value })}
+                    className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs focus:outline-blue-600 resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={isSavingSecurity}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold flex items-center space-x-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSavingSecurity ? 'Saving Profile...' : 'Save Profile Changes'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT USER & SET PASSWORD MODAL (SUB-ADMINS & CUSTOMERS) */}
+      {editingUser && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-gray-100 my-8 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20">
+                  <UserCog className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-gray-900">
+                    Edit {editingUser.role === 'sub_admin' ? 'Sub-Admin' : 'Customer'} Account
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    Modify profile information and assign or reset login password
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingUser(null)}
+                className="p-2 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditUser} className="mt-5 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    value={editUserForm.fullName}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, fullName: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-blue-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    value={editUserForm.email}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, email: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-blue-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    value={editUserForm.phoneNumber}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, phoneNumber: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-blue-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">City</label>
+                  <input
+                    type="text"
+                    value={editUserForm.city}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, city: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-blue-600"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Address</label>
+                  <input
+                    type="text"
+                    value={editUserForm.address}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, address: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-blue-600"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Country</label>
+                  <input
+                    type="text"
+                    value={editUserForm.country}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, country: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-blue-600"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-bold text-gray-700 mb-1">Notes / Instructions</label>
+                  <textarea
+                    rows={2}
+                    value={editUserForm.notes}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, notes: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-blue-600 resize-none"
+                  />
+                </div>
+              </div>
+
+              {/* Reset / Set Password Section */}
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-300 space-y-2">
+                <div className="flex items-center space-x-2 text-xs font-extrabold text-amber-950">
+                  <Key className="w-4 h-4 text-amber-600" />
+                  <span>Set / Reset User Password</span>
+                </div>
+                <p className="text-[11px] text-amber-900">
+                  Enter a new password below to reset this user's password. They can immediately log in with this new password. Leave blank if you do not want to alter their current password.
+                </p>
+
+                <div className="relative">
+                  <input
+                    type={showUserPassText ? 'text' : 'password'}
+                    value={editUserForm.newPassword}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, newPassword: e.target.value })}
+                    placeholder="Enter new password (e.g. Pass123456)"
+                    className="w-full px-3 py-2 pr-10 bg-white border border-amber-300 rounded-xl text-xs font-mono font-bold text-gray-900 focus:outline-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowUserPassText(!showUserPassText)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+                  >
+                    {showUserPassText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-3 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingUser(null)}
+                  className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEditUser}
+                  className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl shadow-md cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{savingEditUser ? 'Saving Changes...' : 'Save User Account'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE USER CONFIRMATION MODAL */}
+      {userToDelete && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100 space-y-4">
+            <div className="flex items-center space-x-3 text-red-600">
+              <div className="w-12 h-12 rounded-2xl bg-red-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-base text-gray-900">
+                  Confirm Permanent Deletion
+                </h3>
+                <p className="text-xs text-red-600 font-bold uppercase tracking-wider">
+                  {userToDelete.role === 'sub_admin' ? 'Sub Admin Account' : 'Customer Account'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 border border-gray-200 rounded-2xl text-xs space-y-1.5">
+              <div>Name: <strong className="text-gray-900">{userToDelete.fullName}</strong></div>
+              <div>Email: <strong className="text-gray-900">{userToDelete.email}</strong></div>
+              <div>Role: <span className="font-mono font-bold uppercase text-blue-600">{userToDelete.role}</span></div>
+              {userToDelete.country && <div>Country: <span className="text-gray-700">{userToDelete.country}</span></div>}
+            </div>
+
+            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800">
+              ⚠️ <strong>Warning:</strong> Are you sure you want to permanently delete this user account? This action cannot be reversed.
+            </div>
+
+            <div className="flex items-center justify-end space-x-2.5 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={() => setUserToDelete(null)}
+                className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={handleConfirmDeleteUser}
+                className="px-5 py-2 text-xs font-black text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-xl shadow-md cursor-pointer transition-colors flex items-center space-x-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeletingUser ? 'Deleting Account...' : 'Yes, Permanently Delete'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING TOAST NOTIFICATION */}
+      {toastNotification && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-2xl text-xs font-bold text-white transition-all transform animate-fadeIn border backdrop-blur-md bg-slate-900/95 border-slate-700">
+          <span className={`w-2 h-2 rounded-full ${toastNotification.type === 'success' ? 'bg-emerald-400' : 'bg-red-400'} animate-pulse`} />
+          <span>{toastNotification.text}</span>
         </div>
       )}
     </div>

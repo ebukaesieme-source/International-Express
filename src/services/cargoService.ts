@@ -126,18 +126,13 @@ export async function getSubAdmins(): Promise<UserProfile[]> {
 export async function getCustomers(subAdminId?: string): Promise<UserProfile[]> {
   const path = 'users';
   try {
-    let q;
+    const snap = await getDocs(collection(db, 'users'));
+    const all = snap.docs.map(d => d.data() as UserProfile);
+    const customers = all.filter(u => u.role === 'customer');
     if (subAdminId) {
-      q = query(
-        collection(db, 'users'),
-        where('role', '==', 'customer'),
-        where('assignedSubAdminId', '==', subAdminId)
-      );
-    } else {
-      q = query(collection(db, 'users'), where('role', '==', 'customer'));
+      return customers.filter(c => c.assignedSubAdminId === subAdminId);
     }
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data() as UserProfile);
+    return customers;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
   }
@@ -186,10 +181,10 @@ export async function transferCustomer(
 export async function getUnassignedCustomers(): Promise<UserProfile[]> {
   const path = 'users';
   try {
-    const q = query(collection(db, 'users'), where('role', '==', 'customer'));
-    const snap = await getDocs(q);
+    const snap = await getDocs(collection(db, 'users'));
     const all = snap.docs.map(d => d.data() as UserProfile);
-    return all.filter(c => !c.assignedSubAdminId || c.assignedSubAdminId === '' || c.assignedSubAdminId === 'unassigned');
+    const customers = all.filter(u => u.role === 'customer');
+    return customers.filter(c => !c.assignedSubAdminId || c.assignedSubAdminId === '' || c.assignedSubAdminId === 'unassigned');
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
   }
@@ -224,7 +219,7 @@ export async function claimCustomer(
     } else {
       const custDoc = await getDoc(doc(db, 'users', customerId));
       const custData = custDoc.data() as UserProfile | undefined;
-      const convId = `conv_${customerId}_${subAdminId}`;
+      const convId = `conv_${customerId}`;
       await setDoc(doc(db, 'conversations', convId), cleanFirestoreData({
         id: convId,
         customerId,
@@ -232,7 +227,7 @@ export async function claimCustomer(
         customerEmail: custData?.email || '',
         subAdminId,
         subAdminName,
-        lastMessage: `Dispatch Officer ${subAdminName} accepted this consignee into active management.`,
+        lastMessage: 'Company Support has joined the channel to assist with your cargo logistics.',
         lastMessageTime: now,
         unreadCountSuperAdmin: 0,
         unreadCountSubAdmin: 0,
@@ -241,17 +236,34 @@ export async function claimCustomer(
         updatedAt: now
       }));
 
-      // Send greeting message from Sub Admin to customer
+      // Send greeting message from Company Support to customer
       await addDoc(collection(db, 'messages'), cleanFirestoreData({
         conversationId: convId,
         senderId: subAdminId,
-        senderName: subAdminName,
+        senderName: 'Company Support',
         senderRole: 'sub_admin',
-        text: `Hello ${custData?.fullName || 'Consignee'}! I am ${subAdminName}, your dedicated logistics dispatch lead. I have accepted your customer account and am now actively managing your air cargo waybills, customs documents, and delivery scheduling. Please feel free to reach out to me here directly.`,
+        text: `Hello ${custData?.fullName || 'Consignee'}! Welcome to our official cargo logistics portal. Company Support is here to assist you with your air cargo waybills, customs documents, and delivery scheduling. Please feel free to reach out to us here directly.`,
         sharedWithSubAdmin: true,
         moderationStatus: 'approved',
-        createdAt: now
       }));
+    }
+
+    // Automatically assign any of this customer's unassigned shipments to the accepting Sub Admin
+    try {
+      const shipQuery = query(collection(db, 'shipments'), where('customerId', '==', customerId));
+      const shipSnap = await getDocs(shipQuery);
+      for (const s of shipSnap.docs) {
+        const sData = s.data();
+        if (!sData.subAdminId || sData.subAdminId === '' || sData.subAdminId === 'unassigned') {
+          await updateDoc(doc(db, 'shipments', s.id), {
+            subAdminId: subAdminId,
+            subAdminName: subAdminName,
+            updatedAt: now
+          });
+        }
+      }
+    } catch (shipErr) {
+      console.warn('Notice assigning customer shipments to sub admin:', shipErr);
     }
 
     await addAuditLog(
@@ -686,7 +698,7 @@ export function subscribeToMessages(
       callback(msgs);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      console.warn('Real-time message subscription notice:', error?.message || error);
     }
   );
 }

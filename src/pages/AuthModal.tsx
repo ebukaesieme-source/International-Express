@@ -100,8 +100,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     e.preventDefault();
     setError(null);
 
-    if (!fullName || !regEmail || !regPassword || !phoneNumber || !address || !country) {
-      setError('Please fill in all mandatory customer fields to complete registration.');
+    if (!fullName.trim() || !regEmail.trim() || !regPassword.trim()) {
+      setError('Please provide your Full Legal Name, Email Address, and a Password.');
       return;
     }
 
@@ -113,14 +113,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     try {
       await registerCustomer({
-        email: regEmail,
-        password: regPassword,
-        fullName,
-        phoneNumber,
-        address,
-        city,
-        country,
-        postalCode
+        email: regEmail.trim(),
+        password: regPassword.trim(),
+        fullName: fullName.trim(),
+        phoneNumber: phoneNumber.trim() || '+1 (555) 000-0000',
+        address: address.trim() || 'Standard Delivery Address',
+        city: city.trim() || 'Gateway City',
+        country: country.trim() || 'United States',
+        postalCode: postalCode.trim() || ''
       });
       onClose();
       if (onSuccessNavigate) {
@@ -128,7 +128,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Failed to register customer account.');
+      setError(err.message || 'Failed to register customer account on Firebase.');
     } finally {
       setLoading(false);
     }

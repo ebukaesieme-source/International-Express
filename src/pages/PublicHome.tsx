@@ -18,7 +18,9 @@ import {
   Layers,
   Sparkles,
   BarChart3,
-  ExternalLink
+  ExternalLink,
+  UserCheck,
+  HeartHandshake
 } from 'lucide-react';
 import { TrackingSection } from '../components/TrackingSection';
 
@@ -73,18 +75,18 @@ export const PublicHome: React.FC<PublicHomeProps> = ({
       {/* Quick Satellite Consignment Lookup - Cleanly positioned below cargo aircraft */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-20 w-full">
 
-        {/* QUICK SATELLITE CONSIGNMENT LOOKUP BAR */}
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-4 sm:p-6 flex flex-col md:flex-row items-center justify-between gap-4">
+        {/* QUICK SATELLITE CONSIGNMENT LOOKUP BAR - Compact & Sleek */}
+        <div className="bg-white rounded-xl shadow-md border border-gray-200 p-3.5 sm:p-4 flex flex-col md:flex-row items-center justify-between gap-3">
           <div className="flex items-center space-x-3 w-full md:w-auto">
-            <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-              <Box className="w-6 h-6" />
+            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <Box className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-extrabold text-gray-900">
+              <h3 className="text-sm font-extrabold text-gray-900">
                 Quick Satellite Consignment Lookup
               </h3>
-              <p className="text-xs text-gray-500">
-                Track status across air, ocean and ground logistics corridors.
+              <p className="text-[11px] text-gray-500">
+                Track status across air, ocean, and ground logistics corridors.
               </p>
             </div>
           </div>
@@ -96,9 +98,9 @@ export const PublicHome: React.FC<PublicHomeProps> = ({
                 value={quickTrackCode}
                 onChange={(e) => setQuickTrackCode(e.target.value)}
                 placeholder="Enter Waybill # (e.g. IEC-748920-EXP)"
-                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-gray-200 rounded-xl text-sm font-mono uppercase tracking-wider focus:outline-none focus:border-blue-500 focus:bg-white transition-all"
+                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-gray-200 rounded-lg text-xs font-mono uppercase tracking-wider focus:outline-none focus:border-blue-500 focus:bg-white transition-all"
               />
-              <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
             </div>
             <button
               onClick={() => {
@@ -110,7 +112,7 @@ export const PublicHome: React.FC<PublicHomeProps> = ({
                   openTrackModal();
                 }
               }}
-              className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl transition-all cursor-pointer whitespace-nowrap shadow-md shadow-blue-600/20"
+              className="w-full sm:w-auto px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition-all cursor-pointer whitespace-nowrap shadow-sm shadow-blue-600/20"
             >
               Track Now
             </button>
@@ -118,151 +120,170 @@ export const PublicHome: React.FC<PublicHomeProps> = ({
         </div>
       </section>
 
-      {/* WHY CHOOSE US - STATS & HIGHLIGHTS */}
-      <section className="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-3xl mx-auto mb-16">
-          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold uppercase tracking-wider mb-3">
-            <Award className="w-4 h-4 text-blue-600" />
-            <span>World-Class Logistics Infrastructure</span>
-          </div>
-          <h2 className="text-3xl sm:text-4xl font-black text-gray-950 tracking-tight">
-            Why Leading Global Enterprises Choose Us
-          </h2>
-          <p className="mt-3 text-sm text-gray-600">
-            Backed by a fleet of wide-body cargo aircraft, bonded airport terminals, and dedicated dispatch officers.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-          <div className="bg-white p-8 rounded-2xl border border-gray-200/80 shadow-xs hover:shadow-lg transition-all">
-            <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center mb-6">
-              <Globe className="w-6 h-6" />
-            </div>
-            <div className="text-3xl font-black text-gray-900 mb-1">220+</div>
-            <h3 className="text-base font-bold text-gray-900 mb-2">Global Countries Served</h3>
-            <p className="text-xs text-gray-500 leading-relaxed">
-              Direct air freight corridors connecting the Americas, Europe, Asia-Pacific, Middle East, and Africa.
-            </p>
-          </div>
-
-          <div className="bg-white p-8 rounded-2xl border border-gray-200/80 shadow-xs hover:shadow-lg transition-all">
-            <div className="w-12 h-12 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-6">
-              <Clock className="w-6 h-6" />
-            </div>
-            <div className="text-3xl font-black text-gray-900 mb-1">99.8%</div>
-            <h3 className="text-base font-bold text-gray-900 mb-2">On-Time Arrival Rate</h3>
-            <p className="text-xs text-gray-500 leading-relaxed">
-              Guaranteed time-definite flight schedules with automated transshipment monitoring.
-            </p>
-          </div>
-
-          <div className="bg-white p-8 rounded-2xl border border-gray-200/80 shadow-xs hover:shadow-lg transition-all">
-            <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center mb-6">
-              <Shield className="w-6 h-6" />
-            </div>
-            <div className="text-3xl font-black text-gray-900 mb-1">100%</div>
-            <h3 className="text-base font-bold text-gray-900 mb-2">Customs Compliance</h3>
-            <p className="text-xs text-gray-500 leading-relaxed">
-              Full tariff assessment, automated duty settlement, and expedited port clearance stamps.
-            </p>
-          </div>
-
-          <div className="bg-white p-8 rounded-2xl border border-gray-200/80 shadow-xs hover:shadow-lg transition-all">
-            <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center mb-6">
-              <Headphones className="w-6 h-6" />
-            </div>
-            <div className="text-3xl font-black text-gray-900 mb-1">24/7</div>
-            <h3 className="text-base font-bold text-gray-900 mb-2">Dedicated Sub Admin Dispatch</h3>
-            <p className="text-xs text-gray-500 leading-relaxed">
-              Personalized customer support with real-time direct chat, photo inspection, and video confirmation.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* CORE CARGO SERVICES */}
-      <section className="py-20 bg-slate-900 text-white">
+      {/* CORE CARGO SERVICES - Compact Cards in Order */}
+      <section className="py-12 bg-slate-900 text-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-4">
+          <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-3">
             <div>
-              <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-3">
-                <Plane className="w-4 h-4 text-blue-400" />
+              <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-[11px] font-semibold uppercase tracking-wider mb-2">
+                <Plane className="w-3.5 h-3.5 text-blue-400" />
                 <span>End-to-End International Logistics</span>
               </div>
-              <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-white">
+              <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
                 Comprehensive Cargo Solutions
               </h2>
             </div>
             <button
               onClick={() => setActiveTab('services')}
-              className="text-sm font-bold text-blue-400 hover:text-blue-300 flex items-center space-x-1 cursor-pointer"
+              className="text-xs font-bold text-blue-400 hover:text-blue-300 flex items-center space-x-1 cursor-pointer"
             >
               <span>Explore All Shipping Services</span>
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Air Cargo Express */}
-            <div className="bg-slate-800/90 border border-gray-700 rounded-3xl p-8 hover:border-blue-500 transition-all group">
-              <div className="w-14 h-14 rounded-2xl bg-blue-600/20 text-blue-400 border border-blue-500/30 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                <Plane className="w-7 h-7" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
+            {/* 1. Cargo Truck & Ground Fleet */}
+            <div className="bg-slate-800/95 border border-gray-700/80 rounded-xl overflow-hidden hover:border-blue-500 transition-all duration-300 group flex flex-col shadow-md">
+              <div className="relative w-full h-28 sm:h-32 overflow-hidden bg-slate-900">
+                <img
+                  src="/assets/cargo_truck.jpg"
+                  alt="Modern commercial cargo truck on the highway"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                />
+                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-slate-900/85 backdrop-blur-xs border border-white/10 text-white text-[10px] font-bold flex items-center space-x-1 shadow-xs">
+                  <Truck className="w-3 h-3 text-blue-400" />
+                  <span>1. Cargo Truck Fleet</span>
+                </div>
               </div>
-              <h3 className="text-xl font-bold text-white mb-2">Priority Air Freight & Charter</h3>
-              <p className="text-xs text-gray-300 leading-relaxed mb-6">
-                Scheduled departures on Boeing 747-8F and 777F freighters. Ideal for high-priority shipments, aerospace components, and time-critical medical supplies.
-              </p>
-              <div className="space-y-2 text-xs text-gray-400 border-t border-gray-700/60 pt-4">
-                <div className="flex items-center space-x-2">
-                  <CheckCircle2 className="w-4 h-4 text-blue-400" />
-                  <span>24 - 48 Hour Transatlantic Corridor</span>
+              <div className="p-3.5 sm:p-4 flex flex-col flex-1">
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-[9px] font-extrabold uppercase tracking-wider text-blue-400">Ground Freight</span>
+                  <span className="text-[9px] text-gray-400">Function 01</span>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <CheckCircle2 className="w-4 h-4 text-blue-400" />
-                  <span>Main Deck Heavy Cargo Pallets</span>
+                <h3 className="text-sm sm:text-base font-bold text-white mb-1 group-hover:text-blue-400 transition-colors">
+                  Cargo Truck & Highway Express
+                </h3>
+                <p className="text-[11px] text-gray-300 leading-relaxed mb-3">
+                  Modern heavy-duty commercial cargo trucks and scheduled intermodal highway logistics. Delivering industrial consignments across regional transit corridors.
+                </p>
+                <div className="space-y-1 text-[11px] text-gray-300 border-t border-gray-700/60 pt-2.5 mb-3">
+                  <div className="flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-blue-400 shrink-0" />
+                    <span>GPS Satellite Monitored Heavy Trucks</span>
+                  </div>
+                  <div className="flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-blue-400 shrink-0" />
+                    <span>Intermodal Haulage & Port Drayage</span>
+                  </div>
+                  <div className="flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-blue-400 shrink-0" />
+                    <span>Temperature-Controlled Freight Fleets</span>
+                  </div>
                 </div>
+                <button
+                  onClick={() => openTrackModal()}
+                  className="mt-auto w-full py-1.5 px-2.5 rounded-lg bg-blue-600/20 hover:bg-blue-600 border border-blue-500/30 hover:border-blue-500 text-blue-300 hover:text-white text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer"
+                >
+                  <Search className="w-3 h-3" />
+                  <span>Track Highway Consignment</span>
+                </button>
               </div>
             </div>
 
-            {/* Ocean & Intermodal Freight */}
-            <div className="bg-slate-800/90 border border-gray-700 rounded-3xl p-8 hover:border-blue-500 transition-all group">
-              <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                <Ship className="w-7 h-7" />
+            {/* 2. Customer Delivery to Older Woman */}
+            <div className="bg-slate-800/95 border border-gray-700/80 rounded-xl overflow-hidden hover:border-emerald-500 transition-all duration-300 group flex flex-col shadow-md">
+              <div className="relative w-full h-28 sm:h-32 overflow-hidden bg-slate-900">
+                <img
+                  src="/assets/delivery_older_woman.jpg"
+                  alt="Courier delivering package to older woman at doorway"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                />
+                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-slate-900/85 backdrop-blur-xs border border-white/10 text-white text-[10px] font-bold flex items-center space-x-1 shadow-xs">
+                  <UserCheck className="w-3 h-3 text-emerald-400" />
+                  <span>2. Residential Delivery</span>
+                </div>
               </div>
-              <h3 className="text-xl font-bold text-white mb-2">Ocean Freight FCL & LCL</h3>
-              <p className="text-xs text-gray-300 leading-relaxed mb-6">
-                Full-container-load (FCL) and consolidated less-than-container-load (LCL) maritime freight with integrated port drayage and rail connections.
-              </p>
-              <div className="space-y-2 text-xs text-gray-400 border-t border-gray-700/60 pt-4">
-                <div className="flex items-center space-x-2">
-                  <CheckCircle2 className="w-4 h-4 text-indigo-400" />
-                  <span>20ft & 40ft High Cube Containers</span>
+              <div className="p-3.5 sm:p-4 flex flex-col flex-1">
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-400">Doorstep Handover</span>
+                  <span className="text-[9px] text-gray-400">Function 02</span>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <CheckCircle2 className="w-4 h-4 text-indigo-400" />
-                  <span>Real-time Reefer Temperature Tracking</span>
+                <h3 className="text-sm sm:text-base font-bold text-white mb-1 group-hover:text-emerald-400 transition-colors">
+                  Customer Delivery to Older Woman
+                </h3>
+                <p className="text-[11px] text-gray-300 leading-relaxed mb-3">
+                  Courteous, verified doorstep delivery to residential recipients and senior customers. Couriers hand-deliver every package with care directly to the front door.
+                </p>
+                <div className="space-y-1 text-[11px] text-gray-300 border-t border-gray-700/60 pt-2.5 mb-3">
+                  <div className="flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                    <span>Direct In-Person Handover to Consignee</span>
+                  </div>
+                  <div className="flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                    <span>Digital Signature & Proof of Delivery</span>
+                  </div>
+                  <div className="flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                    <span>Senior Care & Priority Handling</span>
+                  </div>
                 </div>
+                <button
+                  onClick={() => setActiveTab('services')}
+                  className="mt-auto w-full py-1.5 px-2.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/30 hover:border-emerald-500 text-emerald-300 hover:text-white text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer"
+                >
+                  <UserCheck className="w-3 h-3" />
+                  <span>Residential Services</span>
+                </button>
               </div>
             </div>
 
-            {/* Customs Clearance & Duty Management */}
-            <div className="bg-slate-800/90 border border-gray-700 rounded-3xl p-8 hover:border-amber-500 transition-all group">
-              <div className="w-14 h-14 rounded-2xl bg-amber-600/20 text-amber-400 border border-amber-500/30 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                <Award className="w-7 h-7" />
+            {/* 3. Woman Delivery to Older Man */}
+            <div className="bg-slate-800/95 border border-gray-700/80 rounded-xl overflow-hidden hover:border-amber-500 transition-all duration-300 group flex flex-col shadow-md">
+              <div className="relative w-full h-28 sm:h-32 overflow-hidden bg-slate-900">
+                <img
+                  src="/assets/woman_delivery_older_man.jpg"
+                  alt="Female courier delivering package to older man"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                />
+                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-slate-900/85 backdrop-blur-xs border border-white/10 text-white text-[10px] font-bold flex items-center space-x-1 shadow-xs">
+                  <HeartHandshake className="w-3 h-3 text-amber-400" />
+                  <span>3. White-Glove Handoff</span>
+                </div>
               </div>
-              <h3 className="text-xl font-bold text-white mb-2">Bonded Customs Clearance</h3>
-              <p className="text-xs text-gray-300 leading-relaxed mb-6">
-                Licensed customs brokers manage classification, documentation, payment settlement, and inspection release with national border agencies.
-              </p>
-              <div className="space-y-2 text-xs text-gray-400 border-t border-gray-700/60 pt-4">
-                <div className="flex items-center space-x-2">
-                  <CheckCircle2 className="w-4 h-4 text-amber-400" />
-                  <span>Electronic Duties & Tariffs Settlement</span>
+              <div className="p-3.5 sm:p-4 flex flex-col flex-1">
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-400">Personalized Dispatch</span>
+                  <span className="text-[9px] text-gray-400">Function 03</span>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <CheckCircle2 className="w-4 h-4 text-amber-400" />
-                  <span>Bonded Warehouse Storage Facilities</span>
+                <h3 className="text-sm sm:text-base font-bold text-white mb-1 group-hover:text-amber-400 transition-colors">
+                  Woman Delivery to Older Man
+                </h3>
+                <p className="text-[11px] text-gray-300 leading-relaxed mb-3">
+                  Attentive delivery by professional female couriers to senior gentlemen and households, ensuring safe parcel handover, identity verification, and peace of mind.
+                </p>
+                <div className="space-y-1 text-[11px] text-gray-300 border-t border-gray-700/60 pt-2.5 mb-3">
+                  <div className="flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-amber-400 shrink-0" />
+                    <span>Female Courier Verification</span>
+                  </div>
+                  <div className="flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-amber-400 shrink-0" />
+                    <span>White-Glove Doorstep Parcel Handoff</span>
+                  </div>
+                  <div className="flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3 h-3 text-amber-400 shrink-0" />
+                    <span>Instant Consignee SMS & Dispatch Notice</span>
+                  </div>
                 </div>
+                <button
+                  onClick={() => setActiveTab('services')}
+                  className="mt-auto w-full py-1.5 px-2.5 rounded-lg bg-amber-600/20 hover:bg-amber-600 border border-amber-500/30 hover:border-amber-500 text-amber-300 hover:text-white text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer"
+                >
+                  <HeartHandshake className="w-3 h-3" />
+                  <span>Consignee Protocols</span>
+                </button>
               </div>
             </div>
           </div>
@@ -315,14 +336,78 @@ export const PublicHome: React.FC<PublicHomeProps> = ({
             </p>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl border border-gray-200 relative">
-            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white font-bold flex items-center justify-center text-sm mb-4">
+          <div className="bg-white p-4 sm:p-5 rounded-xl border border-gray-200 relative">
+            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white font-bold flex items-center justify-center text-xs mb-3">
               04
             </div>
-            <h4 className="text-base font-bold text-gray-900 mb-1">Final Mile Delivery</h4>
-            <p className="text-xs text-gray-500 leading-relaxed">
+            <h4 className="text-sm font-bold text-gray-900 mb-1">Final Mile Delivery</h4>
+            <p className="text-[11px] text-gray-500 leading-relaxed">
               Dispatched via secure ground logistics fleet for final doorstep delivery with digital consignee signature.
             </p>
+          </div>
+        </div>
+      </section>
+
+      {/* WHY CHOOSE US - STATS & HIGHLIGHTS (Compact Cards) */}
+      <section className="py-12 bg-slate-50 border-t border-gray-200/80">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center max-w-3xl mx-auto mb-8">
+            <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[11px] font-semibold uppercase tracking-wider mb-2">
+              <Award className="w-3.5 h-3.5 text-blue-600" />
+              <span>World-Class Logistics Infrastructure</span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-black text-gray-950 tracking-tight">
+              Why Leading Global Enterprises Choose Us
+            </h2>
+            <p className="mt-1 text-xs text-gray-600">
+              Backed by wide-body cargo aircraft, bonded terminals, and dedicated dispatch officers.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200/80 shadow-xs hover:shadow-md transition-all">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center mb-3">
+                <Globe className="w-4 h-4" />
+              </div>
+              <div className="text-xl sm:text-2xl font-black text-gray-900 mb-0.5">220+</div>
+              <h3 className="text-xs sm:text-sm font-bold text-gray-900 mb-1">Global Countries Served</h3>
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                Direct freight corridors connecting the Americas, Europe, Asia, and Africa.
+              </p>
+            </div>
+
+            <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200/80 shadow-xs hover:shadow-md transition-all">
+              <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center mb-3">
+                <Clock className="w-4 h-4" />
+              </div>
+              <div className="text-xl sm:text-2xl font-black text-gray-900 mb-0.5">99.8%</div>
+              <h3 className="text-xs sm:text-sm font-bold text-gray-900 mb-1">On-Time Arrival Rate</h3>
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                Guaranteed time-definite flight schedules with automated transshipment monitoring.
+              </p>
+            </div>
+
+            <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200/80 shadow-xs hover:shadow-md transition-all">
+              <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center mb-3">
+                <Shield className="w-4 h-4" />
+              </div>
+              <div className="text-xl sm:text-2xl font-black text-gray-900 mb-0.5">100%</div>
+              <h3 className="text-xs sm:text-sm font-bold text-gray-900 mb-1">Customs Compliance</h3>
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                Full tariff assessment, automated duty settlement, and port clearance stamps.
+              </p>
+            </div>
+
+            <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-gray-200/80 shadow-xs hover:shadow-md transition-all">
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center mb-3">
+                <Headphones className="w-4 h-4" />
+              </div>
+              <div className="text-xl sm:text-2xl font-black text-gray-900 mb-0.5">24/7</div>
+              <h3 className="text-xs sm:text-sm font-bold text-gray-900 mb-1">Dedicated Sub Admin Dispatch</h3>
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                Personalized support with real-time direct chat, photo inspection, and video confirmation.
+              </p>
+            </div>
           </div>
         </div>
       </section>

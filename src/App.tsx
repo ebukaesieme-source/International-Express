@@ -12,11 +12,34 @@ import { SubAdminDashboard } from './pages/SubAdminDashboard';
 import { CustomerDashboard } from './pages/CustomerDashboard';
 import { AuthModal } from './pages/AuthModal';
 import { TrackingSection } from './components/TrackingSection';
-import { X, ShieldAlert } from 'lucide-react';
+import { X, ShieldAlert, Truck } from 'lucide-react';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const AppContent: React.FC = () => {
-  const { userProfile, isSuperAdmin, isSubAdmin, isCustomer } = useAuth();
-  const [activeTab, setActiveTab] = useState<string>('home');
+  const { userProfile, loading: authLoading, isSuperAdmin, isSubAdmin, isCustomer } = useAuth();
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    try {
+      const cachedRole = sessionStorage.getItem('iec_demo_role');
+      if (cachedRole === 'super_admin') return 'super_admin';
+      if (cachedRole === 'sub_admin') return 'sub_admin';
+      if (cachedRole === 'customer') return 'customer';
+      const cachedTab = sessionStorage.getItem('iec_active_tab');
+      if (cachedTab) return cachedTab;
+    } catch (e) {
+      // ignore
+    }
+    return 'home';
+  });
+
+  const handleSetActiveTab = (tab: string) => {
+    setActiveTab(tab);
+    try {
+      sessionStorage.setItem('iec_active_tab', tab);
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [trackModalOpen, setTrackModalOpen] = useState(false);
@@ -34,7 +57,7 @@ const AppContent: React.FC = () => {
 
   const handleNavigateTrack = (code: string) => {
     setTrackSearchCode(code);
-    setActiveTab('track');
+    handleSetActiveTab('track');
   };
 
   const renderContent = () => {
@@ -146,19 +169,45 @@ const AppContent: React.FC = () => {
   React.useEffect(() => {
     if (userProfile?.role) {
       if (userProfile.role === 'super_admin' && activeTab !== 'super_admin') {
-        setActiveTab('super_admin');
+        handleSetActiveTab('super_admin');
       } else if (userProfile.role === 'sub_admin' && activeTab !== 'sub_admin') {
-        setActiveTab('sub_admin');
+        handleSetActiveTab('sub_admin');
       } else if (userProfile.role === 'customer' && activeTab !== 'customer') {
-        setActiveTab('customer');
+        handleSetActiveTab('customer');
       }
     } else {
       // If user logs out, return to public homepage
-      setActiveTab((prev) =>
-        prev === 'super_admin' || prev === 'sub_admin' || prev === 'customer' ? 'home' : prev
-      );
+      setActiveTab((prev) => {
+        if (prev === 'super_admin' || prev === 'sub_admin' || prev === 'customer') {
+          try {
+            sessionStorage.removeItem('iec_active_tab');
+          } catch (e) {}
+          return 'home';
+        }
+        return prev;
+      });
     }
   }, [userProfile?.role, userProfile?.uid]);
+
+  // Auth loading gate: smoothly displays dark brand splash to eliminate white page flash while auth initializes
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0b132b] flex flex-col items-center justify-center text-white select-none">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+            <Truck className="w-7 h-7 text-white" />
+          </div>
+          <div className="text-center">
+            <h2 className="text-sm sm:text-base font-black tracking-wider text-white">INTERNATIONAL EXPRESS CARGO</h2>
+            <p className="text-[11px] text-blue-400 font-mono tracking-widest uppercase mt-0.5">Global Freight Logistics</p>
+          </div>
+          <div className="w-36 h-1 bg-slate-800 rounded-full overflow-hidden mt-1">
+            <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: '65%' }} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const isDashboardView =
     activeTab === 'super_admin' || activeTab === 'sub_admin' || activeTab === 'customer';
@@ -167,12 +216,12 @@ const AppContent: React.FC = () => {
   const showPublicNavbar = !isDashboardView && !userProfile;
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-gray-900 font-sans selection:bg-blue-600 selection:text-white">
+    <div className={`min-h-screen flex flex-col ${isDashboardView ? 'bg-slate-900' : 'bg-slate-50'} text-gray-900 font-sans selection:bg-blue-600 selection:text-white`}>
       {/* Public Header: hidden inside user dashboard and when user is logged in */}
       {showPublicNavbar && (
         <Navbar
           activeTab={activeTab}
-          setActiveTab={setActiveTab}
+          setActiveTab={handleSetActiveTab}
           openAuthModal={openAuth}
           openTrackModal={() => handleOpenTrack()}
         />
@@ -183,7 +232,7 @@ const AppContent: React.FC = () => {
 
       {/* Public Footer (only show on public pages) */}
       {!isDashboardView && !userProfile && (
-        <Footer setActiveTab={setActiveTab} openAuthModal={openAuth} />
+        <Footer setActiveTab={handleSetActiveTab} openAuthModal={openAuth} />
       )}
 
       {/* Auth Modal */}
@@ -191,7 +240,7 @@ const AppContent: React.FC = () => {
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
         defaultMode={authModalMode}
-        onSuccessNavigate={(tab) => setActiveTab(tab)}
+        onSuccessNavigate={(tab) => handleSetActiveTab(tab)}
       />
 
       {/* Quick Track Modal */}
@@ -220,8 +269,10 @@ const AppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
