@@ -141,6 +141,7 @@ export interface Conversation {
   subAdminId: string;
   subAdminName: string;
   lastMessage: string;
+  subAdminLastMessage?: string;
   lastMessageTime: string;
   unreadCustomerCount: number;
   unreadAdminCount: number;

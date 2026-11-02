@@ -577,12 +577,6 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                       isMe ? 'text-blue-100' : 'text-gray-400'
                     }`}
                   >
-                    {msg.isEdited && isCustomer && (
-                      <span className="italic font-medium">
-                        (Edited)
-                      </span>
-                    )}
-
                     {msg.moderationStatus === 'pending_moderation' && isCustomer && (
                       <span className="flex items-center space-x-1 font-bold text-amber-500">
                         <Clock className="w-3 h-3" />

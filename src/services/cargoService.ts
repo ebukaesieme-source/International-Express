@@ -762,8 +762,10 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
 
     // Update conversation last message if approved or not pending moderation
     if (msg.moderationStatus === 'approved') {
+      const msgSummary = msg.text || (msg.attachmentType ? `[${msg.attachmentType.toUpperCase()}]` : 'Sent attachment');
       await updateDoc(doc(db, 'conversations', msg.conversationId), {
-        lastMessage: msg.text || (msg.attachmentType ? `[${msg.attachmentType.toUpperCase()}]` : 'Sent attachment'),
+        lastMessage: msgSummary,
+        subAdminLastMessage: msgSummary,
         lastMessageTime: now,
         updatedAt: now
       });
@@ -877,11 +879,13 @@ export async function editMessage(
       editedBy
     });
 
-    // Update conversation lastMessage so customer sees the new message preview
+    // Update conversation lastMessage so customer sees the new message preview,
+    // while subAdminLastMessage keeps the sub-admin's original message!
     if (current.conversationId) {
       try {
         await updateDoc(doc(db, 'conversations', current.conversationId), {
           lastMessage: newText,
+          subAdminLastMessage: originalText,
           updatedAt: new Date().toISOString()
         });
       } catch (convErr) {
@@ -1293,8 +1297,38 @@ export function subscribeToSubAdminConversations(
   const q = query(collection(db, 'conversations'), where('subAdminId', '==', subAdminId));
   return onSnapshot(
     q,
-    (snapshot) => {
-      const list = snapshot.docs.map(d => d.data() as Conversation);
+    async (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Conversation));
+
+      // Resolve original message text for each conversation so Sub-Admin NEVER sees Super Admin edits
+      await Promise.all(
+        list.map(async (conv) => {
+          try {
+            const msgQ = query(
+              collection(db, 'messages'),
+              where('conversationId', '==', conv.id)
+            );
+            const msgSnap = await getDocs(msgQ);
+            if (!msgSnap.empty) {
+              const msgs = msgSnap.docs.map(d => d.data() as ChatMessage);
+              msgs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+              const subAdminVisibleMsgs = msgs.filter(m =>
+                m.senderRole === 'sub_admin' ||
+                m.senderRole === 'super_admin' ||
+                m.sharedWithSubAdmin === true
+              );
+              if (subAdminVisibleMsgs.length > 0) {
+                const latestMsg = subAdminVisibleMsgs[0];
+                // Sub Admin ALWAYS sees originalText || text, never customerDisplayText or super-admin edit!
+                conv.subAdminLastMessage = latestMsg.originalText || latestMsg.text;
+              }
+            }
+          } catch {
+            // fallback gracefully
+          }
+        })
+      );
+
       list.sort((a, b) => new Date(b.lastMessageTime || b.updatedAt).getTime() - new Date(a.lastMessageTime || a.updatedAt).getTime());
       callback(list);
     },
