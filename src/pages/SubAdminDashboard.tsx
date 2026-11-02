@@ -637,6 +637,24 @@ export const SubAdminDashboard: React.FC = () => {
     }
   };
 
+  // Customer presence helper (calculates online or hours offline)
+  const getCustomerPresence = (cust: UserProfile) => {
+    if (cust.isOnline) {
+      if (!cust.lastSeen) return { isOnline: true, text: 'Online now' };
+      const diffMs = Date.now() - new Date(cust.lastSeen).getTime();
+      if (diffMs < 5 * 60 * 1000) return { isOnline: true, text: 'Online now' };
+    }
+    if (!cust.lastSeen) return { isOnline: false, text: 'Offline for 3 hours' };
+    const diffMs = Date.now() - new Date(cust.lastSeen).getTime();
+    const minutes = Math.floor(diffMs / (60 * 1000));
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    if (minutes < 2) return { isOnline: false, text: 'Offline just now' };
+    if (minutes < 60) return { isOnline: false, text: `Offline for ${minutes}m` };
+    if (hours < 24) return { isOnline: false, text: `Offline for ${hours}h` };
+    return { isOnline: false, text: `Offline for ${days}d` };
+  };
+
   // Filtered lists
   const filteredCustomers = customers.filter(c => {
     const q = customerSearch.toLowerCase();
@@ -1279,7 +1297,28 @@ export const SubAdminDashboard: React.FC = () => {
                               )}
                             </div>
                             <div className="min-w-0">
-                              <div className="font-black text-gray-900 text-sm truncate">{cust.fullName}</div>
+                              <div className="flex items-center space-x-2 flex-wrap">
+                                <div className="font-black text-gray-900 text-sm truncate">{cust.fullName}</div>
+                                {(() => {
+                                  const presence = getCustomerPresence(cust);
+                                  return (
+                                    <span
+                                      className={`text-[9px] font-bold px-2 py-0.2 rounded-full flex items-center space-x-1 shrink-0 border ${
+                                        presence.isOnline
+                                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs'
+                                          : 'bg-slate-100 text-slate-600 border-slate-200'
+                                      }`}
+                                    >
+                                      <span
+                                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                          presence.isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+                                        }`}
+                                      />
+                                      <span>{presence.text}</span>
+                                    </span>
+                                  );
+                                })()}
+                              </div>
                               <div className="text-[11px] text-gray-500 truncate">{cust.email}</div>
                               <div className="text-[10px] text-gray-400 font-mono">ID: {cust.uid}</div>
                             </div>
@@ -1295,6 +1334,7 @@ export const SubAdminDashboard: React.FC = () => {
                             {cust.isSuspended ? 'Suspended' : 'Active Account'}
                           </span>
                         </div>
+
 
                         {/* Contact & Location Info */}
                         <div className="grid grid-cols-2 gap-2 text-[11px] bg-white rounded-xl p-2.5 border border-gray-100">

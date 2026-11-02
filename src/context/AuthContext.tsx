@@ -16,6 +16,7 @@ import {
   getUserProfile,
   createOrUpdateUserProfile,
   updateUserPassword,
+  updateUserPresence,
   getAllUsers,
   getSubAdmins,
   seedInitialDemoData,
@@ -64,6 +65,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     seedInitialDemoData().catch(console.error);
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      // Check if previous session expired due to 30-minute inactivity
+      const lastActivityStr = localStorage.getItem('iec_last_activity');
+      if (lastActivityStr) {
+        const lastTime = parseInt(lastActivityStr, 10);
+        if (Date.now() - lastTime >= 30 * 60 * 1000) {
+          localStorage.removeItem('iec_last_activity');
+          sessionStorage.removeItem('iec_demo_uid');
+          sessionStorage.removeItem('iec_demo_role');
+          sessionStorage.removeItem('iec_active_tab');
+          try {
+            await signOut(auth);
+          } catch (e) {}
+          setCurrentUser(null);
+          setUserProfile(null);
+          setLoading(false);
+          return;
+        }
+      }
+
       setCurrentUser(user);
       if (user) {
         await syncUserProfile(user);
@@ -80,6 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (profile.fullName && (profile.fullName.includes('Marcus Vance') || profile.fullName.includes('Regional Dispatch Lead'))) {
               profile = { ...profile, fullName: 'London Station Dispatch' };
             }
+            localStorage.setItem('iec_last_activity', Date.now().toString());
             setUserProfile(profile);
             setLoading(false);
             return;
@@ -116,6 +137,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (existingByEmail.uid !== user.uid) {
           await deleteUser(existingByEmail.uid);
         }
+        localStorage.setItem('iec_last_activity', Date.now().toString());
         sessionStorage.setItem('iec_demo_uid', user.uid);
         sessionStorage.setItem('iec_demo_role', 'sub_admin');
         setUserProfile(profile);
@@ -158,6 +180,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
+      localStorage.setItem('iec_last_activity', Date.now().toString());
       sessionStorage.setItem('iec_demo_uid', profile.uid);
       sessionStorage.setItem('iec_demo_role', profile.role);
       setUserProfile(profile);
@@ -563,6 +586,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
+    if (userProfile?.uid) {
+      try {
+        await updateUserPresence(userProfile.uid, false);
+      } catch (e) {}
+    }
     localStorage.removeItem('iec_last_activity');
     sessionStorage.removeItem('iec_demo_uid');
     sessionStorage.removeItem('iec_demo_role');
@@ -575,6 +603,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn(e);
     }
   };
+
+  // User online presence heartbeat & unload listener
+  useEffect(() => {
+    if (!userProfile?.uid) return;
+    const uid = userProfile.uid;
+
+    // Immediately mark online
+    updateUserPresence(uid, true).catch(() => {});
+
+    // Periodic heartbeat every 60s
+    const heartbeat = setInterval(() => {
+      updateUserPresence(uid, true).catch(() => {});
+    }, 60000);
+
+    const handleBeforeUnload = () => {
+      updateUserPresence(uid, false).catch(() => {});
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      clearInterval(heartbeat);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [userProfile?.uid]);
+
 
   // 30-minute session inactivity auto-logout (quietly logs out without writing any reason)
   useEffect(() => {

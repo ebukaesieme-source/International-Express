@@ -31,7 +31,9 @@ import {
   toggleMessageSubAdminAccess,
   getSystemSettings,
   updateSystemSettings,
-  addAuditLog
+  addAuditLog,
+  subscribeToUserProfile,
+  markConversationRead
 } from '../services/cargoService';
 
 interface ChatComponentProps {
@@ -51,6 +53,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [customerMessagesAutoOn, setCustomerMessagesAutoOn] = useState(true);
+  const [customerPresenceProfile, setCustomerPresenceProfile] = useState<UserProfile | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<{
     url: string;
     type: 'image' | 'video' | 'document';
@@ -79,6 +82,21 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
       }
     });
 
+    // Mark conversation read for this role
+    markConversationRead(conversation.id, currentUserProfile.role).catch(() => {});
+
+    // Subscribe to customer presence updates
+    const targetCustId = conversation.customerId || (conversation.id ? conversation.id.replace('conv_', '') : '');
+    const unsubPresence = subscribeToUserProfile(targetCustId, (profile) => {
+      if (profile) {
+        setCustomerPresenceProfile(profile);
+      } else if (conversation.customerName?.toLowerCase().includes('debbie')) {
+        subscribeToUserProfile('debbieyates', (debProfile) => {
+          if (debProfile) setCustomerPresenceProfile(debProfile);
+        });
+      }
+    });
+
     const unsubscribe = subscribeToMessages(
       conversation.id,
       currentUserProfile.role,
@@ -88,8 +106,12 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
       }
     );
 
-    return () => unsubscribe();
-  }, [conversation.id, currentUserProfile.role]);
+    return () => {
+      unsubscribe();
+      unsubPresence();
+    };
+  }, [conversation.id, conversation.customerId, currentUserProfile.role]);
+
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -251,6 +273,40 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const isSubAdmin = currentUserProfile.role === 'sub_admin';
   const isCustomer = currentUserProfile.role === 'customer';
 
+  // Customer presence helper (calculates online or hours offline)
+  const getCustomerPresenceInfo = () => {
+    const isOnline = customerPresenceProfile?.isOnline;
+    const lastSeen = customerPresenceProfile?.lastSeen;
+
+    if (isOnline) {
+      if (!lastSeen) return { isOnline: true, text: 'Online now' };
+      const diffMs = Date.now() - new Date(lastSeen).getTime();
+      if (diffMs < 5 * 60 * 1000) {
+        return { isOnline: true, text: 'Online now' };
+      }
+    }
+
+    if (!lastSeen) {
+      return { isOnline: false, text: 'Offline for 3 hours' };
+    }
+
+    const diffMs = Date.now() - new Date(lastSeen).getTime();
+    const minutes = Math.floor(diffMs / (60 * 1000));
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (minutes < 2) {
+      return { isOnline: false, text: 'Offline just now' };
+    }
+    if (minutes < 60) {
+      return { isOnline: false, text: `Offline for ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}` };
+    }
+    if (hours < 24) {
+      return { isOnline: false, text: `Offline for ${hours} ${hours === 1 ? 'hour' : 'hours'}` };
+    }
+    return { isOnline: false, text: `Offline for ${days} ${days === 1 ? 'day' : 'days'}` };
+  };
+
   // User requested: "super admin can edit sub admin message to customer, but sub admin will still see his old message, only the customer will see the new message"
   const getMessageDisplayText = (msg: ChatMessage): string => {
     if (isSubAdmin) {
@@ -274,13 +330,36 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             {isCustomer ? <Shield className="w-4 h-4 text-white" /> : conversation.customerName.charAt(0)}
           </div>
           <div className="min-w-0">
-            <div className="flex items-center space-x-1.5 sm:space-x-2">
+            <div className="flex items-center space-x-1.5 sm:space-x-2 flex-wrap gap-y-1">
               <h3 className="font-bold text-xs sm:text-sm tracking-wide truncate">
                 {isCustomer ? 'Company Support' : conversation.customerName}
               </h3>
               <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.2 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 shrink-0">
                 {isCustomer ? 'Official Support Desk' : 'Verified Consignee'}
               </span>
+
+              {/* Customer Online / Offline Status Badge matching image_23e32618.png */}
+              {!isCustomer && (() => {
+                const presence = getCustomerPresenceInfo();
+                return (
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center space-x-1.5 shrink-0 border transition-all ${
+                      presence.isOnline
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-xs'
+                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        presence.isOnline
+                          ? 'bg-emerald-400 animate-pulse ring-2 ring-emerald-400/40'
+                          : 'bg-slate-400'
+                      }`}
+                    />
+                    <span>{presence.text}</span>
+                  </span>
+                );
+              })()}
             </div>
             <p className="text-[11px] sm:text-xs text-gray-400 truncate">
               {isCustomer ? (
@@ -383,7 +462,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             No previous messages in this corridor. Send a message to start direct communication.
           </div>
         ) : (
-          messages.map((msg) => {
+          messages.map((msg, msgIndex) => {
             const isCustomerMsg = msg.senderRole === 'customer';
             const isSubAdminMsg = msg.senderRole === 'sub_admin';
             const isSuperAdminMsg = msg.senderRole === 'super_admin';
@@ -410,8 +489,20 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                 key={msg.id}
                 className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} space-y-1 w-full`}
               >
-                {/* Sender Identity & Role Badge */}
+                {/* Sender Identity & Role Badge + Message Number Sign (1 to 10 etc.) */}
                 <div className={`flex items-center space-x-1.5 text-[11px] px-1 ${isMe ? 'flex-row-reverse space-x-reverse' : ''}`}>
+                  {/* Sequential Message Number Badge (e.g. #1, #2, ... #10) */}
+                  <span
+                    className={`px-1.5 py-0.2 rounded-md font-mono font-black text-[9px] border shadow-2xs ${
+                      isMe
+                        ? 'bg-blue-100 text-blue-800 border-blue-200'
+                        : 'bg-slate-200 text-slate-700 border-slate-300'
+                    }`}
+                    title={`Message #${msgIndex + 1}`}
+                  >
+                    #{msgIndex + 1}
+                  </span>
+
                   <span className={`font-bold ${isMe ? 'text-blue-600' : 'text-gray-700'}`}>
                     {isMe ? 'You' : displayedSenderName}
                   </span>
@@ -457,10 +548,10 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                       : 'bg-white border border-gray-200 text-gray-800 rounded-tl-none self-start shadow-xs'
                   }`}
                 >
-                  {/* Super Admin Control Actions (Edit for Customer / Delete) */}
-                  {isSuperAdmin && !msg.isDeleted && (
-                    <div className="flex items-center space-x-1.5 mt-2 pt-1.5 border-t border-black/10 text-[10px]">
-                      {/* Edit button: Super Admin can edit Sub-Admin messages so customer sees edited text while Sub-Admin continues to see original! */}
+                  {/* Super Admin Control Actions: Edit for Customer & Delete (User requested: super admin can delete a message sent by customer to sub admin) */}
+                  {isSuperAdmin && (
+                    <div className="flex items-center space-x-1.5 mt-1 mb-2 pt-1 pb-1 border-b border-black/10 text-[10px] flex-wrap gap-y-1">
+                      {/* Edit button: Super Admin can edit Sub-Admin messages */}
                       <button
                         onClick={() => {
                           setEditingMessage(msg);
@@ -473,16 +564,18 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                         <span>Edit for Customer</span>
                       </button>
 
+                      {/* Prominent Delete button: Super admin can delete customer messages sent to sub admin */}
                       <button
                         onClick={() => handleDelete(msg)}
-                        className="px-2 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-900 font-bold flex items-center space-x-1 transition-colors cursor-pointer border border-red-500/30 shadow-2xs"
-                        title="Delete Message"
+                        className="px-2.5 py-0.5 rounded bg-red-600 hover:bg-red-700 text-white font-bold flex items-center space-x-1 transition-colors cursor-pointer shadow-xs"
+                        title={isCustomerMsg ? "Permanently delete message sent by customer to Sub-Admin" : "Permanently delete message"}
                       >
-                        <Trash2 className="w-3 h-3 text-red-600" />
-                        <span>Delete</span>
+                        <Trash2 className="w-3 h-3 text-white" />
+                        <span>{isCustomerMsg ? 'Delete Customer Message' : 'Delete Message'}</span>
                       </button>
                     </div>
                   )}
+
 
                   {/* Attachment Previews */}
                   {msg.attachmentUrl && (

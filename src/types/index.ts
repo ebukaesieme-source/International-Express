@@ -20,6 +20,8 @@ export interface UserProfile {
   isSuspended?: boolean;
   notes?: string;
   customPassword?: string;
+  isOnline?: boolean;
+  lastSeen?: string;
   createdAt: string;
   updatedAt: string;
 }

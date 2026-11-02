@@ -35,13 +35,16 @@ import {
   PaymentRecord,
   SystemSettings
 } from '../types';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import {
   getCustomerShipments,
   subscribeToCustomerShipments,
   getOrCreateConversation,
   getShipmentPayments,
   getSystemSettings,
-  recordPayment
+  recordPayment,
+  markConversationRead
 } from '../services/cargoService';
 import { ChatComponent } from '../components/ChatComponent';
 import { TrackingSection } from '../components/TrackingSection';
@@ -61,6 +64,7 @@ export const CustomerDashboard: React.FC = () => {
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [selectedTrackingCode, setSelectedTrackingCode] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState<number>(0);
 
   // Pay Duty modal
   const [payingShipment, setPayingShipment] = useState<Shipment | null>(null);
@@ -75,10 +79,34 @@ export const CustomerDashboard: React.FC = () => {
       setShipments(updatedList);
     });
 
+    // Real-time conversation subscription for unread message numbers (1 to 10 etc.)
+    const convId = `conv_${customerId}`;
+    const unsubConv = onSnapshot(
+      doc(db, 'conversations', convId),
+      (snap) => {
+        if (snap.exists()) {
+          const c = snap.data() as Conversation;
+          setConversation(c);
+          setUnreadMessagesCount(c.unreadCustomerCount || 0);
+        }
+      },
+      (err) => console.warn('Conversation snapshot error:', err)
+    );
+
     return () => {
       unsubShipments();
+      unsubConv();
     };
   }, [customerId, userProfile?.assignedSubAdminId]);
+
+  // When opening chat tab, clear unread message count
+  useEffect(() => {
+    if (activeTab === 'chat' && conversation?.id) {
+      markConversationRead(conversation.id, 'customer').catch(() => {});
+      setUnreadMessagesCount(0);
+    }
+  }, [activeTab, conversation?.id]);
+
 
   const loadCustomerData = async () => {
     setLoading(true);
@@ -191,10 +219,16 @@ export const CustomerDashboard: React.FC = () => {
               </div>
               <button
                 onClick={() => setActiveTab('chat')}
-                className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer shadow-xs"
-                title="Direct Company Support Chat"
+                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-full text-xs transition-colors cursor-pointer shadow-sm flex items-center space-x-1.5 shrink-0"
+                title="Support Chat"
               >
-                Chat Support
+                <MessageSquare className="w-3.5 h-3.5 text-white" />
+                <span>Support Chat</span>
+                {unreadMessagesCount > 0 && (
+                  <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-black animate-pulse shadow-xs border border-white/40">
+                    {unreadMessagesCount > 10 ? '10+' : unreadMessagesCount}
+                  </span>
+                )}
               </button>
             </div>
 
@@ -363,6 +397,11 @@ export const CustomerDashboard: React.FC = () => {
                   <MessageSquare className="w-4 h-4 shrink-0" />
                   <span className="truncate">Support Chat</span>
                 </div>
+                {unreadMessagesCount > 0 && (
+                  <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full font-black animate-pulse shadow-2xs">
+                    {unreadMessagesCount > 10 ? '10+' : unreadMessagesCount}
+                  </span>
+                )}
               </button>
 
               <button
@@ -877,12 +916,17 @@ export const CustomerDashboard: React.FC = () => {
             setActiveTab('chat');
             setSidebarOpen(false);
           }}
-          className={`flex flex-col items-center py-1 px-3 rounded-xl text-[10px] font-bold transition-all cursor-pointer ${
+          className={`flex flex-col items-center py-1 px-3 rounded-xl text-[10px] font-bold transition-all cursor-pointer relative ${
             activeTab === 'chat' ? 'text-blue-400 bg-blue-500/15' : 'text-gray-400 hover:text-gray-200'
           }`}
         >
           <MessageSquare className="w-5 h-5 mb-0.5" />
           <span>Support Chat</span>
+          {unreadMessagesCount > 0 && (
+            <span className="absolute top-0 right-2 bg-red-500 text-white text-[9px] px-1 rounded-full font-black animate-pulse shadow-xs">
+              {unreadMessagesCount > 10 ? '10+' : unreadMessagesCount}
+            </span>
+          )}
         </button>
       </nav>
     </div>

@@ -16,6 +16,7 @@ import {
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import {
   UserProfile,
+  UserRole,
   Shipment,
   TrackingEvent,
   Conversation,
@@ -103,6 +104,46 @@ export async function updateUserPassword(uid: string, newPassword: string): Prom
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
+
+export async function updateUserPresence(uid: string, isOnline: boolean): Promise<void> {
+  if (!uid) return;
+  const path = `users/${uid}`;
+  const now = new Date().toISOString();
+  try {
+    await updateDoc(doc(db, 'users', uid), {
+      isOnline,
+      lastSeen: now,
+      updatedAt: now
+    });
+  } catch (error) {
+    try {
+      await setDoc(doc(db, 'users', uid), { isOnline, lastSeen: now, updatedAt: now }, { merge: true });
+    } catch (e) {
+      // silent
+    }
+  }
+}
+
+export function subscribeToUserProfile(uid: string, callback: (profile: UserProfile | null) => void) {
+  if (!uid) {
+    callback(null);
+    return () => {};
+  }
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => {
+      if (snap.exists()) {
+        callback(snap.data() as UserProfile);
+      } else {
+        callback(null);
+      }
+    },
+    (err) => {
+      console.warn('subscribeToUserProfile notice:', err);
+    }
+  );
+}
+
 
 export async function getAllUsers(): Promise<UserProfile[]> {
   const path = 'users';
@@ -1073,20 +1114,48 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
     });
     const docRef = await addDoc(collection(db, 'messages'), dataToSave);
 
-    // Update conversation last message if approved or not pending moderation
+    // Update conversation last message and unread counts
     if (msg.moderationStatus === 'approved') {
       const msgSummary = msg.text || (msg.attachmentType ? `[${msg.attachmentType.toUpperCase()}]` : 'Sent attachment');
-      await updateDoc(doc(db, 'conversations', msg.conversationId), {
+      const isCustomer = msg.senderRole === 'customer';
+
+      const convRef = doc(db, 'conversations', msg.conversationId);
+      const convSnap = await getDoc(convRef);
+      let curUnreadCust = 0;
+      let curUnreadAdmin = 0;
+      if (convSnap.exists()) {
+        const cData = convSnap.data() as Conversation;
+        curUnreadCust = cData.unreadCustomerCount || 0;
+        curUnreadAdmin = cData.unreadAdminCount || 0;
+      }
+
+      await updateDoc(convRef, {
         lastMessage: msgSummary,
         subAdminLastMessage: msgSummary,
         lastMessageTime: now,
+        unreadCustomerCount: isCustomer ? curUnreadCust : (curUnreadCust + 1),
+        unreadAdminCount: isCustomer ? (curUnreadAdmin + 1) : curUnreadAdmin,
         updatedAt: now
-      });
+      }).catch(err => console.warn('Conversation count update notice:', err));
     }
 
     return docRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function markConversationRead(conversationId: string, role: UserRole): Promise<void> {
+  const path = `conversations/${conversationId}`;
+  try {
+    const convRef = doc(db, 'conversations', conversationId);
+    if (role === 'customer') {
+      await updateDoc(convRef, { unreadCustomerCount: 0 });
+    } else {
+      await updateDoc(convRef, { unreadAdminCount: 0 });
+    }
+  } catch (e) {
+    // silent catch
   }
 }
 
@@ -1106,6 +1175,9 @@ export function subscribeToMessages(
     (snapshot) => {
       let msgs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ChatMessage));
       
+      // Filter out deleted messages
+      msgs = msgs.filter(m => !m.isDeleted);
+
       // If user is sub_admin, only show messages if:
       // - Sent by sub_admin or super_admin
       // - OR customer message where sharedWithSubAdmin is explicitly true (not held by Super Admin)
@@ -1228,16 +1300,49 @@ export async function toggleMessageSubAdminAccess(
 export async function deleteMessage(messageId: string, deletedBy: string): Promise<void> {
   const path = `messages/${messageId}`;
   try {
-    await updateDoc(doc(db, 'messages', messageId), {
-      isDeleted: true,
-      deletedAt: new Date().toISOString(),
-      deletedBy,
-      text: '[This message was deleted by administration in accordance with data retention policy]'
-    });
+    const snap = await getDoc(doc(db, 'messages', messageId));
+    let convId = '';
+    if (snap.exists()) {
+      const data = snap.data() as ChatMessage;
+      convId = data.conversationId;
+    }
+
+    // Permanently remove message from Firestore
+    await deleteDoc(doc(db, 'messages', messageId));
+
+    // Update conversation last message if needed
+    if (convId) {
+      try {
+        const q = query(collection(db, 'messages'), where('conversationId', '==', convId));
+        const remSnap = await getDocs(q);
+        if (!remSnap.empty) {
+          const remMsgs = remSnap.docs.map(d => d.data() as ChatMessage).filter(m => !m.isDeleted);
+          if (remMsgs.length > 0) {
+            remMsgs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            const latest = remMsgs[0];
+            await updateDoc(doc(db, 'conversations', convId), {
+              lastMessage: latest.customerDisplayText || latest.text || '',
+              subAdminLastMessage: latest.originalText || latest.text || '',
+              lastMessageTime: latest.createdAt || new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          } else {
+            await updateDoc(doc(db, 'conversations', convId), {
+              lastMessage: '',
+              subAdminLastMessage: '',
+              updatedAt: new Date().toISOString()
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Notice updating conv on message deletion:', e);
+      }
+    }
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
+
 
 /* ---------------- SYSTEM SETTINGS & AUDIT LOGS ---------------- */
 
@@ -1377,6 +1482,8 @@ export async function seedInitialDemoData(): Promise<void> {
         assignedSubAdminId: 'sub_admin_1',
         assignedSubAdminName: 'Sub Admin Station',
         isSuspended: false,
+        isOnline: true,
+        lastSeen: new Date().toISOString(),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
@@ -1398,10 +1505,80 @@ export async function seedInitialDemoData(): Promise<void> {
         assignedSubAdminId: '',
         assignedSubAdminName: 'Unassigned (Awaiting Sub Admin Acceptance)',
         isSuspended: false,
+        isOnline: false,
+        lastSeen: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
         createdAt: new Date(Date.now() - 3600 * 1000).toISOString(),
         updatedAt: new Date(Date.now() - 3600 * 1000).toISOString()
       });
     }
+
+    // 3c. Customer debbieyates from live user channel (conv_DymxtSU8Yvea1NGNXP4ASDLVw9D3)
+    const debbieSnap = await getDoc(doc(db, 'users', 'debbieyates'));
+    const debbieLastSeen = new Date(Date.now() - 3 * 3600 * 1000).toISOString(); // 3 hours ago -> "Offline for 3 hours"
+    if (!debbieSnap.exists()) {
+      await setDoc(doc(db, 'users', 'debbieyates'), {
+        uid: 'debbieyates',
+        email: 'debbieyates@expresscargo.com',
+        fullName: 'debbieyates',
+        role: 'customer',
+        phoneNumber: '+1 (555) 782-9012',
+        address: '40 North 400 West',
+        city: 'Heber City',
+        country: 'United States',
+        postalCode: '84032',
+        assignedSubAdminId: 'sub_admin_1',
+        assignedSubAdminName: 'admin support',
+        isSuspended: false,
+        isOnline: false,
+        lastSeen: debbieLastSeen,
+        createdAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    // Also support UID DymxtSU8Yvea1NGNXP4ASDLVw9D3 if Firebase generated that auth UID
+    const debbieUidSnap = await getDoc(doc(db, 'users', 'DymxtSU8Yvea1NGNXP4ASDLVw9D3'));
+    if (!debbieUidSnap.exists()) {
+      await setDoc(doc(db, 'users', 'DymxtSU8Yvea1NGNXP4ASDLVw9D3'), {
+        uid: 'DymxtSU8Yvea1NGNXP4ASDLVw9D3',
+        email: 'debbieyates@expresscargo.com',
+        fullName: 'debbieyates',
+        role: 'customer',
+        phoneNumber: '+1 (555) 782-9012',
+        address: '40 North 400 West',
+        city: 'Heber City',
+        country: 'United States',
+        postalCode: '84032',
+        assignedSubAdminId: 'sub_admin_1',
+        assignedSubAdminName: 'admin support',
+        isSuspended: false,
+        isOnline: false,
+        lastSeen: debbieLastSeen,
+        createdAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    const debbieConvId = 'conv_DymxtSU8Yvea1NGNXP4ASDLVw9D3';
+    const debbieConvSnap = await getDoc(doc(db, 'conversations', debbieConvId));
+    if (!debbieConvSnap.exists()) {
+      await setDoc(doc(db, 'conversations', debbieConvId), {
+        id: debbieConvId,
+        customerId: 'DymxtSU8Yvea1NGNXP4ASDLVw9D3',
+        customerName: 'debbieyates',
+        customerEmail: 'debbieyates@expresscargo.com',
+        subAdminId: 'sub_admin_1',
+        subAdminName: 'admin support',
+        lastMessage: "Hello madam, we had some network downtime that's why. everything is in order, we are sorry for the network failure. i hope you understand our message previously.",
+        subAdminLastMessage: "Hello madam, we had some network downtime that's why. everything is in order, we are sorry for the network failure. i hope you understand our message previously.",
+        lastMessageTime: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+        unreadCustomerCount: 1,
+        unreadAdminCount: 0,
+        createdAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+
 
     // 4. Sample shipment with exact itemized fees matching live bill telemetry
     const sampleTracking = 'IEC-748920-EXP';
