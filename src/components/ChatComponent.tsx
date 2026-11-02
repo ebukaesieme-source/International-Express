@@ -17,7 +17,6 @@ import {
   Info,
   X,
   Mic,
-  Sparkles,
   Lock,
   Users,
   CheckCircle2
@@ -260,10 +259,6 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
     }
     // Super Admin sees customer-facing text (or original)
     return msg.customerDisplayText || msg.text;
-  };
-
-  const insertTemplate = (template: string) => {
-    setInputText(prev => prev ? `${prev}\n${template}` : template);
   };
 
   return (
@@ -692,30 +687,6 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               title="Attach Freight Photo"
             >
               <ImageIcon className="w-4 h-4" />
-            </button>
-
-            {/* Quick Template / Sparkles */}
-            <button
-              type="button"
-              onClick={() => insertTemplate('Our international air freight logistics desk has cleared your consignment through customs.')}
-              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
-              title="Insert Logistics Status Template"
-            >
-              <Sparkles className="w-4 h-4" />
-            </button>
-
-            {/* Letter Heading Template Button */}
-            <button
-              type="button"
-              onClick={() =>
-                insertTemplate(
-                  'INTERNATIONAL EXPRESS CARGO — OFFICIAL AIR WAYBILL DISPATCH NOTICE\nRef: Waybill Operations Dept.\n\nDear Valued Consignee,\n'
-                )
-              }
-              className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 text-gray-600 hover:text-blue-700 bg-gray-100 hover:bg-blue-50 border border-gray-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-            >
-              <FileText className="w-3.5 h-3.5 text-blue-600" />
-              <span>Letter Heading</span>
             </button>
           </div>
 

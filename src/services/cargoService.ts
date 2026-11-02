@@ -146,6 +146,43 @@ export async function sanitizeAndDeduplicateUsers(): Promise<void> {
         await deleteDoc(doc(db, 'users', u.docId));
       }
     }
+
+    // Purge any auto-sent or template messages from the database
+    const messagesSnap = await getDocs(collection(db, 'messages'));
+    for (const msgDoc of messagesSnap.docs) {
+      const data = msgDoc.data() as ChatMessage;
+      const text = data.text || '';
+      if (
+        text.includes('welcome to International Express Cargo') ||
+        text.includes('dedicated logistics dispatcher') ||
+        text.includes('Welcome to our official cargo logistics portal') ||
+        text.includes('avionics crate clears New York customs') ||
+        text.includes('I am Marcus') ||
+        text.includes('Thank you Marcus') ||
+        text.includes('Marcus Vance')
+      ) {
+        await deleteDoc(doc(db, 'messages', msgDoc.id));
+      }
+    }
+
+    // Clear template lastMessage from conversations
+    const convSnap = await getDocs(collection(db, 'conversations'));
+    for (const cDoc of convSnap.docs) {
+      const cData = cDoc.data() as Conversation;
+      if (
+        cData.lastMessage &&
+        (cData.lastMessage.includes('welcome to International Express Cargo') ||
+         cData.lastMessage.includes('transatlantic Boeing') ||
+         cData.lastMessage.includes('joined the channel') ||
+         cData.lastMessage.includes('avionics crate') ||
+         cData.lastMessage.includes('Marcus'))
+      ) {
+        await updateDoc(doc(db, 'conversations', cDoc.id), {
+          lastMessage: '',
+          updatedAt: new Date().toISOString()
+        });
+      }
+    }
   } catch (error) {
     console.warn('Error during user sanitization:', error);
   }
@@ -306,24 +343,13 @@ export async function claimCustomer(
         customerEmail: custData?.email || '',
         subAdminId,
         subAdminName,
-        lastMessage: 'Company Support has joined the channel to assist with your cargo logistics.',
+        lastMessage: '',
         lastMessageTime: now,
         unreadCountSuperAdmin: 0,
         unreadCountSubAdmin: 0,
-        unreadCountCustomer: 1,
+        unreadCountCustomer: 0,
         createdAt: now,
         updatedAt: now
-      }));
-
-      // Send greeting message from Company Support to customer
-      await addDoc(collection(db, 'messages'), cleanFirestoreData({
-        conversationId: convId,
-        senderId: subAdminId,
-        senderName: 'Company Support',
-        senderRole: 'sub_admin',
-        text: `Hello ${custData?.fullName || 'Consignee'}! Welcome to our official cargo logistics portal. Company Support is here to assist you with your air cargo waybills, customs documents, and delivery scheduling. Please feel free to reach out to us here directly.`,
-        sharedWithSubAdmin: true,
-        moderationStatus: 'approved',
       }));
     }
 
@@ -689,7 +715,7 @@ export async function getOrCreateConversation(
       customerEmail,
       subAdminId,
       subAdminName,
-      lastMessage: 'Conversation opened',
+      lastMessage: '',
       lastMessageTime: new Date().toISOString(),
       unreadCustomerCount: 0,
       unreadAdminCount: 0,
@@ -1142,7 +1168,7 @@ export async function seedInitialDemoData(): Promise<void> {
       });
     }
 
-    // 5. Sample conversation and message
+    // 5. Channel for demo customer (starts completely clean with no auto-sent messages)
     const convId = 'conv_customer_demo_1';
     const convSnap = await getDoc(doc(db, 'conversations', convId));
     if (!convSnap.exists()) {
@@ -1153,36 +1179,12 @@ export async function seedInitialDemoData(): Promise<void> {
         customerEmail: 'customer@apexlogistics.com',
         subAdminId: 'sub_admin_1',
         subAdminName: 'Company Support',
-        lastMessage: 'Your transatlantic Boeing 747 consignment has touched down safely in JFK transfer.',
+        lastMessage: '',
         lastMessageTime: new Date().toISOString(),
         unreadCustomerCount: 0,
         unreadAdminCount: 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
-      });
-
-      await addDoc(collection(db, 'messages'), {
-        conversationId: convId,
-        senderId: 'sub_admin_1',
-        senderName: 'Company Support',
-        senderRole: 'sub_admin',
-        recipientId: 'customer_demo_1',
-        recipientRole: 'customer',
-        text: 'Hello Elena, welcome to International Express Cargo. We are Company Support, your dedicated logistics desk for this route.',
-        moderationStatus: 'approved',
-        createdAt: new Date(Date.now() - 3600 * 1000 * 20).toISOString()
-      });
-
-      await addDoc(collection(db, 'messages'), {
-        conversationId: convId,
-        senderId: 'customer_demo_1',
-        senderName: 'Elena Rostova',
-        senderRole: 'customer',
-        recipientId: 'sub_admin_1',
-        recipientRole: 'sub_admin',
-        text: 'Thank you Support! Please let me know when the avionics crate clears New York customs so our receiving team in SFO can be ready.',
-        moderationStatus: 'approved',
-        createdAt: new Date(Date.now() - 3600 * 1000 * 10).toISOString()
       });
     }
   } catch (err) {
