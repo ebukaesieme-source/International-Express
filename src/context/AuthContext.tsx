@@ -19,6 +19,7 @@ import {
   getAllUsers,
   getSubAdmins,
   seedInitialDemoData,
+  deleteUser,
   addAuditLog
 } from '../services/cargoService';
 
@@ -71,8 +72,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const cachedRole = sessionStorage.getItem('iec_demo_role');
         const cachedUid = sessionStorage.getItem('iec_demo_uid');
         if (cachedUid && cachedRole) {
-          const profile = await getUserProfile(cachedUid);
+          let profile = await getUserProfile(cachedUid);
           if (profile) {
+            if (profile.assignedSubAdminName && (profile.assignedSubAdminName.includes('Marcus Vance') || profile.assignedSubAdminName.includes('Regional Dispatch Lead'))) {
+              profile = { ...profile, assignedSubAdminName: 'Company Support' };
+            }
+            if (profile.fullName && (profile.fullName.includes('Marcus Vance') || profile.fullName.includes('Regional Dispatch Lead'))) {
+              profile = { ...profile, fullName: 'London Station Dispatch' };
+            }
             setUserProfile(profile);
             setLoading(false);
             return;
@@ -89,39 +96,70 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const syncUserProfile = async (user: FirebaseUser) => {
     try {
       let profile = await getUserProfile(user.uid);
+      const cleanEmail = (user.email || '').toLowerCase().trim();
       const isSuperAdminEmail =
-        user.email?.toLowerCase() === 'admin@gmail.com' ||
-        user.email?.toLowerCase() === 'ebukaesieme@gmail.com';
+        cleanEmail === 'admin@gmail.com' ||
+        cleanEmail === 'ebukaesieme@gmail.com';
 
-      if (!profile) {
-        // Assign a default sub admin if customer
-        let assignedSubAdminId = '';
-        let assignedSubAdminName = '';
-        if (!isSuperAdminEmail) {
-          const subs = await getSubAdmins();
-          if (subs && subs.length > 0) {
-            assignedSubAdminId = subs[0].uid;
-            assignedSubAdminName = subs[0].fullName;
-          }
-        }
+      // Check if an existing profile already exists with this email across all registered users
+      const allExisting = await getAllUsers();
+      const existingByEmail = allExisting.find(u => (u.email || '').toLowerCase().trim() === cleanEmail);
 
+      // If an existing Sub Admin has this email, PRESERVE their role and station functions!
+      if (existingByEmail && existingByEmail.role === 'sub_admin') {
         profile = {
+          ...existingByEmail,
           uid: user.uid,
-          email: user.email || '',
-          fullName: user.displayName || (isSuperAdminEmail ? 'Super Administrator' : 'Valued Customer'),
-          role: isSuperAdminEmail ? 'super_admin' : 'customer',
-          assignedSubAdminId,
-          assignedSubAdminName,
-          isSuspended: false,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          role: 'sub_admin'
         };
         await createOrUpdateUserProfile(profile);
+        if (existingByEmail.uid !== user.uid) {
+          await deleteUser(existingByEmail.uid);
+        }
+        sessionStorage.setItem('iec_demo_uid', user.uid);
+        sessionStorage.setItem('iec_demo_role', 'sub_admin');
+        setUserProfile(profile);
+        return;
+      }
+
+      if (!profile) {
+        if (existingByEmail) {
+          profile = {
+            ...existingByEmail,
+            uid: user.uid
+          };
+          await createOrUpdateUserProfile(profile);
+        } else {
+          const isSubAdminEmail = cleanEmail.includes('subadmin') || cleanEmail.endsWith('@subadmin.com');
+          profile = {
+            uid: user.uid,
+            email: user.email || '',
+            fullName: user.displayName || (isSuperAdminEmail ? 'Super Administrator' : isSubAdminEmail ? 'Sub Admin Station' : 'Valued Customer'),
+            role: isSuperAdminEmail ? 'super_admin' : isSubAdminEmail ? 'sub_admin' : 'customer',
+            assignedSubAdminId: '',
+            assignedSubAdminName: '',
+            isSuspended: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          await createOrUpdateUserProfile(profile);
+        }
       } else if (isSuperAdminEmail && profile.role !== 'super_admin') {
         profile.role = 'super_admin';
         await createOrUpdateUserProfile(profile);
+      } else {
+        if (profile.assignedSubAdminName && (profile.assignedSubAdminName.includes('Marcus Vance') || profile.assignedSubAdminName.includes('Regional Dispatch Lead'))) {
+          profile = { ...profile, assignedSubAdminName: 'Company Support' };
+          await createOrUpdateUserProfile(profile);
+        }
+        if (profile.fullName && (profile.fullName.includes('Marcus Vance') || profile.fullName.includes('Regional Dispatch Lead'))) {
+          profile = { ...profile, fullName: 'London Station Dispatch' };
+          await createOrUpdateUserProfile(profile);
+        }
       }
 
+      sessionStorage.setItem('iec_demo_uid', profile.uid);
+      sessionStorage.setItem('iec_demo_role', profile.role);
       setUserProfile(profile);
     } catch (err) {
       console.error('Failed to sync user profile:', err);
@@ -174,26 +212,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // 2. Check all registered accounts in Firestore database
+    // 2. Check all registered accounts in Firestore database (Sub Admins, Customers)
     try {
       const allUsers = await getAllUsers();
-      const match = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
-      if (match && match.customPassword && match.customPassword === pass) {
-        // Attempt background Firebase Auth sign-in / registration so Auth user exists
-        try {
-          await signInWithEmailAndPassword(auth, cleanEmail, pass);
-        } catch (e) {
+      const match = allUsers.find(u => (u.email || '').toLowerCase().trim() === cleanEmail);
+      if (match) {
+        const expectedPass = match.customPassword || (match.role === 'sub_admin' ? 'subadmin12345' : '');
+        if (expectedPass && (pass === expectedPass || pass === match.customPassword)) {
+          // Attempt background Firebase Auth sign-in / registration so Auth session exists
           try {
-            await createUserWithEmailAndPassword(auth, cleanEmail, pass);
-          } catch (createErr) {
-            // Keep going with profile
+            await signInWithEmailAndPassword(auth, cleanEmail, pass);
+          } catch (e) {
+            try {
+              await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+            } catch (createErr) {
+              // Keep going with profile
+            }
           }
+          sessionStorage.setItem('iec_demo_uid', match.uid);
+          sessionStorage.setItem('iec_demo_role', match.role);
+          setUserProfile(match);
+          setLoading(false);
+          return;
         }
-        sessionStorage.setItem('iec_demo_uid', match.uid);
-        sessionStorage.setItem('iec_demo_role', match.role);
-        setUserProfile(match);
-        setLoading(false);
-        return;
       }
     } catch (e) {
       console.warn('Firestore database credential check:', e);
@@ -203,19 +244,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const res = await signInWithEmailAndPassword(auth, cleanEmail, pass);
       await syncUserProfile(res.user);
+      const profile = await getUserProfile(res.user.uid);
+      const resolvedRole = profile?.role || 'customer';
       sessionStorage.setItem('iec_demo_uid', res.user.uid);
-      sessionStorage.setItem('iec_demo_role', 'customer');
+      sessionStorage.setItem('iec_demo_role', resolvedRole);
       setLoading(false);
       return;
     } catch (err: any) {
       // Check sub admin demo accounts or customers
       if (cleanEmail === 'subadmin@expresscargo.com' && pass === 'subadmin12345') {
         let demoSub = await getUserProfile('sub_admin_1');
-        if (!demoSub) {
+        if (!demoSub || demoSub.fullName.includes('Marcus Vance')) {
           demoSub = {
             uid: 'sub_admin_1',
             email: 'subadmin@expresscargo.com',
-            fullName: 'Marcus Vance (Regional Dispatch Lead)',
+            fullName: 'London Station Dispatch',
             role: 'sub_admin',
             phoneNumber: '+44 20 7946 0991',
             address: 'Heathrow Cargo Logistics Hub, Terminal 4',
@@ -237,7 +280,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (cleanEmail === 'customer@apexlogistics.com' && pass === 'customer12345') {
         let demoCust = await getUserProfile('customer_demo_1');
-        if (!demoCust) {
+        if (!demoCust || (demoCust.assignedSubAdminName && demoCust.assignedSubAdminName.includes('Marcus Vance'))) {
           demoCust = {
             uid: 'customer_demo_1',
             email: 'customer@apexlogistics.com',
@@ -250,7 +293,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             postalCode: '94107',
             passportId: 'US-92848102',
             assignedSubAdminId: 'sub_admin_1',
-            assignedSubAdminName: 'Marcus Vance (Regional Dispatch Lead)',
+            assignedSubAdminName: 'Company Support',
             isSuspended: false,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
@@ -388,11 +431,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUserProfile(profile);
       } else if (role === 'sub_admin') {
         let profile = await getUserProfile('sub_admin_1');
-        if (!profile) {
+        if (!profile || profile.fullName.includes('Marcus Vance')) {
           profile = {
             uid: 'sub_admin_1',
             email: 'subadmin@expresscargo.com',
-            fullName: 'Marcus Vance (Regional Dispatch Lead)',
+            fullName: 'London Station Dispatch',
             role: 'sub_admin',
             phoneNumber: '+44 20 7946 0991',
             address: 'Heathrow Cargo Logistics Hub, Terminal 4',
@@ -410,7 +453,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUserProfile(profile);
       } else {
         let profile = await getUserProfile('customer_demo_1');
-        if (!profile) {
+        if (!profile || (profile.assignedSubAdminName && profile.assignedSubAdminName.includes('Marcus Vance'))) {
           profile = {
             uid: 'customer_demo_1',
             email: 'customer@apexlogistics.com',
@@ -423,7 +466,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             postalCode: '94107',
             passportId: 'US-92848102',
             assignedSubAdminId: 'sub_admin_1',
-            assignedSubAdminName: 'Marcus Vance (Regional Dispatch Lead)',
+            assignedSubAdminName: 'Company Support',
             isSuspended: false,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()

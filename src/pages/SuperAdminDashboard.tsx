@@ -278,16 +278,29 @@ export const SuperAdminDashboard: React.FC = () => {
     if (!subAdminForm.fullName || !subAdminForm.email) return;
 
     try {
+      const cleanEmail = subAdminForm.email.trim().toLowerCase();
       const newUid = 'subadmin_' + Date.now();
+      const initialPassword = subAdminForm.password.trim() || 'subadmin12345';
+
+      // 1. Delete any accidental customer records that have this same email
+      const allUsers = await getAllUsers();
+      for (const u of allUsers) {
+        if (u.email && u.email.toLowerCase().trim() === cleanEmail && u.role === 'customer') {
+          await deleteUser(u.uid);
+        }
+      }
+
+      // 2. Create the real Sub Admin profile
       await createOrUpdateUserProfile({
         uid: newUid,
-        email: subAdminForm.email,
-        fullName: subAdminForm.fullName,
+        email: cleanEmail,
+        fullName: subAdminForm.fullName.trim(),
         role: 'sub_admin',
-        phoneNumber: subAdminForm.phoneNumber,
-        city: subAdminForm.city,
-        country: subAdminForm.country,
-        notes: subAdminForm.notes,
+        customPassword: initialPassword,
+        phoneNumber: subAdminForm.phoneNumber.trim(),
+        city: subAdminForm.city.trim(),
+        country: subAdminForm.country.trim() || 'United Kingdom',
+        notes: subAdminForm.notes.trim(),
         isSuspended: false
       });
 
@@ -295,7 +308,7 @@ export const SuperAdminDashboard: React.FC = () => {
         'sub_admin_created',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
-        `Created Sub Admin account: ${subAdminForm.fullName} (${subAdminForm.email}). Generated initial login: ${subAdminForm.email} / ${subAdminForm.password || 'subadmin12345'}`
+        `Created Sub Admin account: ${subAdminForm.fullName} (${cleanEmail}). Generated initial login: ${cleanEmail} / ${initialPassword}`
       );
 
       setShowCreateSubAdminModal(false);
@@ -308,11 +321,11 @@ export const SuperAdminDashboard: React.FC = () => {
         country: 'United States',
         notes: ''
       });
-      loadAllData();
-      alert(`Sub Admin account for ${subAdminForm.fullName} created successfully!`);
+      await loadAllData();
+      showToast(`Sub Admin account for ${subAdminForm.fullName} created successfully with full Sub Admin privileges!`);
     } catch (err) {
       console.error(err);
-      alert('Error creating Sub Admin account.');
+      showToast('Error creating Sub Admin account.', 'error');
     }
   };
 
@@ -1417,7 +1430,7 @@ export const SuperAdminDashboard: React.FC = () => {
                                 </span>
                               ) : (
                                 <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg text-xs">
-                                  {cust.assignedSubAdminName}
+                                  {cust.assignedSubAdminName?.replace(/\s*\(Regional Dispatch Lead\)/gi, '') || 'Sub Admin Station'}
                                 </span>
                               )}
                             </td>

@@ -24,7 +24,8 @@ import {
   SystemSettings,
   AuditLog,
   CustomsPaymentStatus,
-  ShipmentStatus
+  ShipmentStatus,
+  AppNotification
 } from '../types';
 
 /**
@@ -106,18 +107,69 @@ export async function getAllUsers(): Promise<UserProfile[]> {
   const path = 'users';
   try {
     const snap = await getDocs(collection(db, 'users'));
-    return snap.docs.map(d => d.data() as UserProfile);
+    return snap.docs.map(d => {
+      const u = d.data() as UserProfile;
+      if (u.assignedSubAdminName && (u.assignedSubAdminName.includes('Regional Dispatch Lead') || u.assignedSubAdminName.includes('Marcus Vance'))) {
+        u.assignedSubAdminName = 'Company Support';
+      }
+      return u;
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function sanitizeAndDeduplicateUsers(): Promise<void> {
+  const path = 'users';
+  try {
+    const snap = await getDocs(collection(db, 'users'));
+    const allUsers = snap.docs.map(d => ({ docId: d.id, ...d.data() } as UserProfile & { docId: string }));
+    
+    // Collect all sub admin & super admin emails
+    const adminEmails = new Set<string>([
+      'admin@gmail.com',
+      'ebukaesieme@gmail.com',
+      'subadmin@expresscargo.com'
+    ]);
+
+    allUsers.forEach(u => {
+      if ((u.role === 'sub_admin' || u.role === 'super_admin') && u.email) {
+        adminEmails.add(u.email.toLowerCase().trim());
+      }
+    });
+
+    // Remove any accidental customer documents created with a sub-admin or super-admin email
+    for (const u of allUsers) {
+      const email = (u.email || '').toLowerCase().trim();
+      if (u.role === 'customer' && adminEmails.has(email)) {
+        console.warn(`Cleaning up duplicate customer document with admin email: ${u.docId} (${email})`);
+        await deleteDoc(doc(db, 'users', u.docId));
+      }
+    }
+  } catch (error) {
+    console.warn('Error during user sanitization:', error);
   }
 }
 
 export async function getSubAdmins(): Promise<UserProfile[]> {
   const path = 'users';
   try {
-    const q = query(collection(db, 'users'), where('role', '==', 'sub_admin'));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data() as UserProfile);
+    const snap = await getDocs(collection(db, 'users'));
+    const all = snap.docs.map(d => d.data() as UserProfile);
+    
+    const seenEmails = new Set<string>();
+    const subAdmins: UserProfile[] = [];
+
+    for (const u of all) {
+      if (u.role === 'sub_admin') {
+        const email = (u.email || '').toLowerCase().trim();
+        if (!seenEmails.has(email)) {
+          seenEmails.add(email);
+          subAdmins.push(u);
+        }
+      }
+    }
+    return subAdmins;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
   }
@@ -127,8 +179,35 @@ export async function getCustomers(subAdminId?: string): Promise<UserProfile[]> 
   const path = 'users';
   try {
     const snap = await getDocs(collection(db, 'users'));
-    const all = snap.docs.map(d => d.data() as UserProfile);
-    const customers = all.filter(u => u.role === 'customer');
+    
+    // Collect all sub admin & super admin emails
+    const adminEmails = new Set<string>([
+      'admin@gmail.com',
+      'ebukaesieme@gmail.com',
+      'subadmin@expresscargo.com'
+    ]);
+
+    snap.docs.forEach(d => {
+      const u = d.data() as UserProfile;
+      if (u.role === 'sub_admin' || u.role === 'super_admin') {
+        if (u.email) adminEmails.add(u.email.toLowerCase().trim());
+      }
+    });
+
+    const all = snap.docs.map(d => {
+      const u = d.data() as UserProfile;
+      if (u.assignedSubAdminName && (u.assignedSubAdminName.includes('Regional Dispatch Lead') || u.assignedSubAdminName.includes('Marcus Vance'))) {
+        u.assignedSubAdminName = 'Company Support';
+      }
+      return u;
+    });
+
+    // Exclude any document with role !== 'customer' OR email in adminEmails
+    const customers = all.filter(u => 
+      u.role === 'customer' && 
+      !adminEmails.has((u.email || '').toLowerCase().trim())
+    );
+
     if (subAdminId) {
       return customers.filter(c => c.assignedSubAdminId === subAdminId);
     }
@@ -460,8 +539,12 @@ export function getStatusTitle(status: ShipmentStatus): string {
       return 'Shipment Registration & Booking Confirmed';
     case 'package_received':
       return 'Package Received at Logistics Terminal';
+    case 'picked_up':
+      return 'Package Picked Up from Origin Consignor';
     case 'processing':
       return 'Cargo Processing, Weighing & Security Screening';
+    case 'sorting_facility':
+      return 'Arrived at Central Sorting & Consolidation Facility';
     case 'departure':
       return 'Departed from Origin International Airport / Port';
     case 'in_transit':
@@ -474,6 +557,10 @@ export function getStatusTitle(status: ShipmentStatus): string {
       return 'Dispatched & Out for Final Doorstep Delivery';
     case 'delivered':
       return 'Package Successfully Delivered & Signed For';
+    case 'delayed':
+      return 'Shipment Delayed - Transit Exception';
+    case 'failed':
+      return 'Delivery Attempt Failed - Notice Left';
     case 'cancelled':
       return 'Shipment Cancelled / Suspended';
     default:
@@ -874,6 +961,9 @@ export async function getAuditLogs(): Promise<AuditLog[]> {
 
 export async function seedInitialDemoData(): Promise<void> {
   try {
+    // 0. Clean up any accidental customer records that have sub-admin emails
+    await sanitizeAndDeduplicateUsers();
+
     // 1. Check if super admin already exists
     const superAdminSnap = await getDoc(doc(db, 'users', 'super_admin_seed'));
     if (!superAdminSnap.exists()) {
@@ -899,7 +989,7 @@ export async function seedInitialDemoData(): Promise<void> {
       await setDoc(doc(db, 'users', 'sub_admin_1'), {
         uid: 'sub_admin_1',
         email: 'subadmin@expresscargo.com',
-        fullName: 'Marcus Vance (Regional Dispatch Lead)',
+        fullName: 'Sub Admin Station',
         role: 'sub_admin',
         phoneNumber: '+44 20 7946 0991',
         address: 'Heathrow Cargo Logistics Hub, Terminal 4',
@@ -907,7 +997,7 @@ export async function seedInitialDemoData(): Promise<void> {
         country: 'United Kingdom',
         postalCode: 'TW6 3XZ',
         isSuspended: false,
-        notes: 'Lead dispatch officer for EMEA and transatlantic cargo corridors.',
+        notes: 'Dispatch station authority for air and freight corridors.',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
@@ -928,7 +1018,7 @@ export async function seedInitialDemoData(): Promise<void> {
         postalCode: '94107',
         passportId: 'US-92848102',
         assignedSubAdminId: 'sub_admin_1',
-        assignedSubAdminName: 'Marcus Vance (Regional Dispatch Lead)',
+        assignedSubAdminName: 'Sub Admin Station',
         isSuspended: false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -972,7 +1062,7 @@ export async function seedInitialDemoData(): Promise<void> {
         customerEmail: 'customer@apexlogistics.com',
         customerPhone: '+1 (415) 890-3344',
         subAdminId: 'sub_admin_1',
-        subAdminName: 'Marcus Vance (Regional Dispatch Lead)',
+        subAdminName: 'Sub Admin Station',
         description: 'High-Value Aerospace Avionics & Microcontroller Assemblies',
         packageType: 'Air Cargo Heavy Crate',
         weightKg: 142.5,
@@ -1011,7 +1101,7 @@ export async function seedInitialDemoData(): Promise<void> {
         description: 'Electronic documentation processed. Manifest transmitted to airline.',
         location: 'Munich, Germany',
         timestamp: new Date(now.getTime() - 72 * 3600 * 1000).toISOString(),
-        recordedBy: 'Marcus Vance',
+        recordedBy: 'Sub Admin Station',
         recordedByRole: 'sub_admin'
       });
 
@@ -1023,7 +1113,7 @@ export async function seedInitialDemoData(): Promise<void> {
         description: 'Pallet weighed, scanned, and banded with tamper-evident security seal #SEAL-9982.',
         location: 'Munich Airport Cargo (MUC)',
         timestamp: new Date(now.getTime() - 48 * 3600 * 1000).toISOString(),
-        recordedBy: 'Marcus Vance',
+        recordedBy: 'Sub Admin Station',
         recordedByRole: 'sub_admin'
       });
 
@@ -1035,7 +1125,7 @@ export async function seedInitialDemoData(): Promise<void> {
         description: 'Flight IEC-890 airborne over Atlantic international flight corridor.',
         location: 'Munich Airport (MUC)',
         timestamp: new Date(now.getTime() - 24 * 3600 * 1000).toISOString(),
-        recordedBy: 'Marcus Vance',
+        recordedBy: 'Sub Admin Station',
         recordedByRole: 'sub_admin'
       });
 
@@ -1062,7 +1152,7 @@ export async function seedInitialDemoData(): Promise<void> {
         customerName: 'Elena Rostova (Apex Global Imports)',
         customerEmail: 'customer@apexlogistics.com',
         subAdminId: 'sub_admin_1',
-        subAdminName: 'Marcus Vance (Regional Dispatch Lead)',
+        subAdminName: 'Company Support',
         lastMessage: 'Your transatlantic Boeing 747 consignment has touched down safely in JFK transfer.',
         lastMessageTime: new Date().toISOString(),
         unreadCustomerCount: 0,
@@ -1074,11 +1164,11 @@ export async function seedInitialDemoData(): Promise<void> {
       await addDoc(collection(db, 'messages'), {
         conversationId: convId,
         senderId: 'sub_admin_1',
-        senderName: 'Marcus Vance',
+        senderName: 'Company Support',
         senderRole: 'sub_admin',
         recipientId: 'customer_demo_1',
         recipientRole: 'customer',
-        text: 'Hello Elena, welcome to International Express Cargo. I am Marcus, your dedicated logistics dispatcher for this route.',
+        text: 'Hello Elena, welcome to International Express Cargo. We are Company Support, your dedicated logistics desk for this route.',
         moderationStatus: 'approved',
         createdAt: new Date(Date.now() - 3600 * 1000 * 20).toISOString()
       });
@@ -1090,7 +1180,7 @@ export async function seedInitialDemoData(): Promise<void> {
         senderRole: 'customer',
         recipientId: 'sub_admin_1',
         recipientRole: 'sub_admin',
-        text: 'Thank you Marcus! Please let me know when the avionics crate clears New York customs so our receiving team in SFO can be ready.',
+        text: 'Thank you Support! Please let me know when the avionics crate clears New York customs so our receiving team in SFO can be ready.',
         moderationStatus: 'approved',
         createdAt: new Date(Date.now() - 3600 * 1000 * 10).toISOString()
       });
@@ -1099,3 +1189,324 @@ export async function seedInitialDemoData(): Promise<void> {
     console.error('Error seeding demo data:', err);
   }
 }
+
+/* ---------------- REAL-TIME SYNCHRONIZATION & SUB-ADMIN SERVICES ---------------- */
+
+export function subscribeToSubAdminCustomers(
+  subAdminId: string,
+  callback: (customers: UserProfile[]) => void
+) {
+  const q = query(collection(db, 'users'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const adminEmails = new Set<string>([
+        'admin@gmail.com',
+        'ebukaesieme@gmail.com',
+        'subadmin@expresscargo.com'
+      ]);
+
+      snapshot.docs.forEach(d => {
+        const u = d.data() as UserProfile;
+        if ((u.role === 'sub_admin' || u.role === 'super_admin') && u.email) {
+          adminEmails.add(u.email.toLowerCase().trim());
+        }
+      });
+
+      const all = snapshot.docs.map(d => {
+        const u = d.data() as UserProfile;
+        if (u.assignedSubAdminName && (u.assignedSubAdminName.includes('Regional Dispatch Lead') || u.assignedSubAdminName.includes('Marcus Vance'))) {
+          u.assignedSubAdminName = 'Company Support';
+        }
+        return u;
+      });
+      // Strict access control: only customers assigned to this subAdminId, excluding admin emails
+      const assigned = all.filter(u => 
+        u.role === 'customer' && 
+        !adminEmails.has((u.email || '').toLowerCase().trim()) &&
+        u.assignedSubAdminId === subAdminId
+      );
+      callback(assigned);
+    },
+    (err) => {
+      console.warn('Real-time sub admin customer listener error:', err);
+    }
+  );
+}
+
+export function subscribeToSubAdminShipments(
+  subAdminId: string,
+  callback: (shipments: Shipment[]) => void
+) {
+  const q = query(collection(db, 'shipments'), where('subAdminId', '==', subAdminId));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list = snapshot.docs.map(d => d.data() as Shipment);
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(list);
+    },
+    (err) => {
+      console.warn('Real-time sub admin shipments listener error:', err);
+    }
+  );
+}
+
+export function subscribeToCustomerShipments(
+  customerId: string,
+  callback: (shipments: Shipment[]) => void
+) {
+  const q = query(collection(db, 'shipments'), where('customerId', '==', customerId));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list = snapshot.docs.map(d => d.data() as Shipment);
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(list);
+    },
+    (err) => {
+      console.warn('Real-time customer shipments listener error:', err);
+    }
+  );
+}
+
+export function subscribeToSubAdminConversations(
+  subAdminId: string,
+  callback: (convs: Conversation[]) => void
+) {
+  const q = query(collection(db, 'conversations'), where('subAdminId', '==', subAdminId));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list = snapshot.docs.map(d => d.data() as Conversation);
+      list.sort((a, b) => new Date(b.lastMessageTime || b.updatedAt).getTime() - new Date(a.lastMessageTime || a.updatedAt).getTime());
+      callback(list);
+    },
+    (err) => {
+      console.warn('Real-time sub admin conversations listener error:', err);
+    }
+  );
+}
+
+/* ---------------- NOTIFICATIONS ---------------- */
+
+export async function createNotification(notif: Omit<AppNotification, 'id' | 'createdAt'>): Promise<string> {
+  const path = 'notifications';
+  try {
+    const now = new Date().toISOString();
+    const docRef = await addDoc(collection(db, 'notifications'), cleanFirestoreData({
+      ...notif,
+      createdAt: now
+    }));
+    return docRef.id;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export function subscribeToNotifications(
+  recipientId: string,
+  callback: (notifs: AppNotification[]) => void
+) {
+  const q = query(
+    collection(db, 'notifications'),
+    where('recipientId', 'in', [recipientId, 'all'])
+  );
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AppNotification));
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(list);
+    },
+    (err) => {
+      console.warn('Real-time notifications listener error:', err);
+    }
+  );
+}
+
+export async function markNotificationRead(notifId: string): Promise<void> {
+  const path = `notifications/${notifId}`;
+  try {
+    await updateDoc(doc(db, 'notifications', notifId), { read: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+/* ---------------- SUB-ADMIN STRICT SCOPED SERVICES ---------------- */
+
+export async function verifyCustomerAssignedToSubAdmin(customerId: string, subAdminId: string): Promise<boolean> {
+  try {
+    const snap = await getDoc(doc(db, 'users', customerId));
+    if (!snap.exists()) return false;
+    const user = snap.data() as UserProfile;
+    return user.role === 'customer' && user.assignedSubAdminId === subAdminId;
+  } catch {
+    return false;
+  }
+}
+
+export async function createShipmentForSubAdmin(
+  subAdminId: string,
+  data: Omit<Shipment, 'id' | 'createdAt' | 'updatedAt'>,
+  actorName: string
+): Promise<Shipment> {
+  const isAssigned = await verifyCustomerAssignedToSubAdmin(data.customerId, subAdminId);
+  if (!isAssigned) {
+    throw new Error('Access Denied: You can only create deliveries for customers assigned directly to your dispatch station.');
+  }
+
+  const shipment = await createShipment(
+    {
+      ...data,
+      subAdminId,
+      subAdminName: actorName
+    },
+    actorName,
+    'sub_admin'
+  );
+
+  // Send real-time notification to the customer
+  await createNotification({
+    recipientId: data.customerId,
+    recipientRole: 'customer',
+    type: 'delivery_update',
+    title: 'New Cargo Consignment Booked',
+    message: `A new shipment with tracking number ${shipment.trackingNumber} has been booked for you.`,
+    linkId: shipment.id,
+    read: false
+  });
+
+  await addAuditLog(
+    'subadmin_create_shipment',
+    actorName,
+    'sub_admin',
+    `Created consignment ${shipment.trackingNumber} for assigned customer ${data.customerName} (${data.customerId})`,
+    shipment.id
+  );
+
+  return shipment;
+}
+
+export async function updateShipmentForSubAdmin(
+  subAdminId: string,
+  shipmentId: string,
+  updates: Partial<Shipment>,
+  actorName: string
+): Promise<void> {
+  const snap = await getDoc(doc(db, 'shipments', shipmentId));
+  if (!snap.exists()) throw new Error('Shipment not found.');
+  const current = snap.data() as Shipment;
+
+  if (current.subAdminId !== subAdminId) {
+    const isAssigned = await verifyCustomerAssignedToSubAdmin(current.customerId, subAdminId);
+    if (!isAssigned) {
+      throw new Error('Access Denied: You can only edit consignments belonging to your assigned customers.');
+    }
+  }
+
+  await updateShipment(shipmentId, updates, actorName, 'sub_admin');
+
+  // Notify customer of update
+  await createNotification({
+    recipientId: current.customerId,
+    recipientRole: 'customer',
+    type: 'delivery_update',
+    title: 'Consignment Updated',
+    message: `Shipment ${current.trackingNumber} details have been updated. Status: ${(updates.status || current.status).replace(/_/g, ' ').toUpperCase()}`,
+    linkId: shipmentId,
+    read: false
+  });
+
+  await addAuditLog(
+    'subadmin_update_shipment',
+    actorName,
+    'sub_admin',
+    `Updated consignment ${current.trackingNumber}. Status: ${updates.status || current.status}`,
+    shipmentId
+  );
+}
+
+export async function addTrackingCheckpointForSubAdmin(
+  subAdminId: string,
+  event: Omit<TrackingEvent, 'id'>,
+  actorName: string
+): Promise<string> {
+  const snap = await getDoc(doc(db, 'shipments', event.shipmentId));
+  if (!snap.exists()) throw new Error('Shipment not found.');
+  const current = snap.data() as Shipment;
+
+  if (current.subAdminId !== subAdminId) {
+    const isAssigned = await verifyCustomerAssignedToSubAdmin(current.customerId, subAdminId);
+    if (!isAssigned) {
+      throw new Error('Access Denied: You cannot update tracking for an unassigned customer.');
+    }
+  }
+
+  const eventId = await addTrackingEvent({
+    ...event,
+    recordedBy: actorName,
+    recordedByRole: 'sub_admin'
+  });
+
+  // Update current shipment state
+  await updateDoc(doc(db, 'shipments', event.shipmentId), cleanFirestoreData({
+    currentLocation: event.location,
+    status: event.status,
+    deliveryProgressPercentage: event.deliveryProgressPercentage ?? current.deliveryProgressPercentage,
+    statusNotes: event.description,
+    delayExplanation: event.delayExplanation || current.delayExplanation || '',
+    coordinates: event.coordinates || current.coordinates || null,
+    updatedAt: new Date().toISOString()
+  }));
+
+  // Generate notification for customer
+  await createNotification({
+    recipientId: current.customerId,
+    recipientRole: 'customer',
+    type: 'tracking_event',
+    title: event.title,
+    message: `${event.description} [Location: ${event.location}]`,
+    linkId: event.shipmentId,
+    read: false
+  });
+
+  await addAuditLog(
+    'subadmin_add_tracking_checkpoint',
+    actorName,
+    'sub_admin',
+    `Added tracking checkpoint "${event.title}" at "${event.location}" for ${current.trackingNumber}`,
+    event.shipmentId
+  );
+
+  return eventId;
+}
+
+export async function deleteShipmentForSubAdmin(
+  subAdminId: string,
+  shipmentId: string,
+  actorName: string
+): Promise<void> {
+  const snap = await getDoc(doc(db, 'shipments', shipmentId));
+  if (!snap.exists()) throw new Error('Shipment not found.');
+  const current = snap.data() as Shipment;
+
+  if (current.subAdminId !== subAdminId) {
+    const isAssigned = await verifyCustomerAssignedToSubAdmin(current.customerId, subAdminId);
+    if (!isAssigned) {
+      throw new Error('Access Denied: You cannot delete shipments belonging to other administrators.');
+    }
+  }
+
+  await deleteShipment(shipmentId);
+
+  await addAuditLog(
+    'subadmin_delete_shipment',
+    actorName,
+    'sub_admin',
+    `Deleted consignment ${current.trackingNumber} for customer ${current.customerName}`,
+    shipmentId
+  );
+}
+

@@ -37,6 +37,7 @@ import {
 } from '../types';
 import {
   getCustomerShipments,
+  subscribeToCustomerShipments,
   getOrCreateConversation,
   getShipmentPayments,
   getSystemSettings,
@@ -68,7 +69,16 @@ export const CustomerDashboard: React.FC = () => {
 
   useEffect(() => {
     loadCustomerData();
-  }, [customerId]);
+
+    // Subscribe in real-time to shipments for immediate synchronization
+    const unsubShipments = subscribeToCustomerShipments(customerId, (updatedList) => {
+      setShipments(updatedList);
+    });
+
+    return () => {
+      unsubShipments();
+    };
+  }, [customerId, userProfile?.assignedSubAdminId]);
 
   const loadCustomerData = async () => {
     setLoading(true);
@@ -88,7 +98,7 @@ export const CustomerDashboard: React.FC = () => {
           userProfile.fullName,
           userProfile.email,
           userProfile.assignedSubAdminId,
-          userProfile.assignedSubAdminName
+          userProfile.assignedSubAdminName || 'Company Support'
         );
         setConversation(conv);
       }

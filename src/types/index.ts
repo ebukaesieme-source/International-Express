@@ -5,6 +5,8 @@ export interface UserProfile {
   email: string;
   fullName: string;
   role: UserRole;
+  photoUrl?: string;
+  avatarUrl?: string;
   companyName?: string;
   phoneNumber?: string;
   phone?: string;
@@ -25,13 +27,17 @@ export interface UserProfile {
 export type ShipmentStatus =
   | 'registered'
   | 'package_received'
+  | 'picked_up'
   | 'processing'
+  | 'sorting_facility'
   | 'departure'
   | 'in_transit'
   | 'arrival_destination'
   | 'customs_processing'
   | 'out_for_delivery'
   | 'delivered'
+  | 'delayed'
+  | 'failed'
   | 'cancelled';
 
 export type CustomsPaymentStatus = 'pending' | 'partially_paid' | 'paid' | 'waived';
@@ -77,9 +83,11 @@ export interface Shipment {
   departureLocation: string;
   destinationLocation: string;
   currentLocation?: string;
+  coordinates?: { latitude: number; longitude: number };
   carrier: string;
   status: ShipmentStatus;
   statusNotes?: string;
+  delayExplanation?: string;
   deliveryProgressPercentage?: number;
   estimatedDeliveryDate: string;
   actualDeliveryDate?: string;
@@ -104,10 +112,25 @@ export interface TrackingEvent {
   description: string;
   location: string;
   facility?: string;
+  coordinates?: { latitude: number; longitude: number };
+  delayExplanation?: string;
+  estimatedArrival?: string;
   deliveryProgressPercentage?: number;
   timestamp: string;
   recordedBy: string;
   recordedByRole: string;
+}
+
+export interface AppNotification {
+  id: string;
+  recipientId: string;
+  recipientRole?: UserRole | 'all';
+  type: 'message' | 'delivery_update' | 'tracking_event' | 'assignment' | 'alert';
+  title: string;
+  message: string;
+  linkId?: string;
+  read: boolean;
+  createdAt: string;
 }
 
 export interface Conversation {
