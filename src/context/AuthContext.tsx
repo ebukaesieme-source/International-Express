@@ -563,8 +563,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
+    localStorage.removeItem('iec_last_activity');
     sessionStorage.removeItem('iec_demo_uid');
     sessionStorage.removeItem('iec_demo_role');
+    sessionStorage.removeItem('iec_active_tab');
     setUserProfile(null);
     setCurrentUser(null);
     try {
@@ -573,6 +575,75 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn(e);
     }
   };
+
+  // 30-minute session inactivity auto-logout (quietly logs out without writing any reason)
+  useEffect(() => {
+    if (!userProfile && !currentUser) {
+      localStorage.removeItem('iec_last_activity');
+      return;
+    }
+
+    const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
+    const STORAGE_KEY = 'iec_last_activity';
+
+    // Record initial activity if not set
+    if (!localStorage.getItem(STORAGE_KEY)) {
+      localStorage.setItem(STORAGE_KEY, Date.now().toString());
+    }
+
+    const performQuietLogout = async () => {
+      localStorage.removeItem(STORAGE_KEY);
+      await logout();
+    };
+
+    let lastRecorded = Date.now();
+    const updateActivity = () => {
+      const now = Date.now();
+      // Throttle updates to at most once every 5 seconds
+      if (now - lastRecorded > 5000) {
+        lastRecorded = now;
+        localStorage.setItem(STORAGE_KEY, now.toString());
+      }
+    };
+
+    const checkInactivity = () => {
+      const lastStr = localStorage.getItem(STORAGE_KEY);
+      const lastTime = lastStr ? parseInt(lastStr, 10) : lastRecorded;
+      if (Date.now() - lastTime >= INACTIVITY_TIMEOUT_MS) {
+        performQuietLogout();
+      }
+    };
+
+    // Immediate check on mount/refresh
+    checkInactivity();
+
+    // Check periodically every 10 seconds
+    const intervalId = setInterval(checkInactivity, 10000);
+
+    // Track user interaction events
+    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach((evt) => {
+      window.addEventListener(evt, updateActivity, { passive: true });
+    });
+
+    // Check when user returns to tab
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        checkInactivity();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    return () => {
+      clearInterval(intervalId);
+      activityEvents.forEach((evt) => {
+        window.removeEventListener(evt, updateActivity);
+      });
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
+  }, [userProfile?.uid, currentUser?.uid]);
 
   const refreshProfile = async () => {
     if (userProfile?.uid) {
