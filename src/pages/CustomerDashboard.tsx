@@ -637,6 +637,8 @@ export const CustomerDashboard: React.FC = () => {
               <ChatComponent
                 conversation={conversation}
                 currentUserProfile={userProfile}
+                onReturn={() => setActiveTab('shipments')}
+                onClose={() => setActiveTab('shipments')}
               />
             ) : (
               <div className="bg-white p-12 text-center rounded-2xl text-gray-400 text-sm">

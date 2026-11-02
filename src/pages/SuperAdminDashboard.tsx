@@ -2669,6 +2669,7 @@ export const SuperAdminDashboard: React.FC = () => {
             <ChatComponent
               conversation={activeChatConversation}
               currentUserProfile={userProfile}
+              onReturn={() => setActiveChatConversation(null)}
               onClose={() => setActiveChatConversation(null)}
             />
           </div>

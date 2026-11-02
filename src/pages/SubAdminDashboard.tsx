@@ -27,6 +27,7 @@ import {
   Navigation,
   AlertCircle,
   ArrowRight,
+  ArrowLeft,
   Shield,
   Calendar,
   Building,
@@ -1238,24 +1239,30 @@ export const SubAdminDashboard: React.FC = () => {
               {activeChatConversation ? (
                 /* When chat is open: full view, no other cards appear */
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden h-[750px] flex flex-col">
-                  <div className="p-3 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+                  <div className="p-3 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 gap-2">
                     <button
                       onClick={() => setActiveChatConversation(null)}
-                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-gray-200 text-xs font-bold rounded-lg flex items-center space-x-1 cursor-pointer"
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-gray-200 text-xs font-bold rounded-lg flex items-center space-x-1.5 cursor-pointer transition-colors shadow-xs"
+                      title="Return to Customers"
                     >
-                      <span>← Back to Customers</span>
+                      <ArrowLeft className="w-4 h-4 text-white" />
+                      <span>Return</span>
                     </button>
-                    <div className="text-center">
-                      <div className="text-xs font-bold text-white">
+                    <div className="text-center min-w-0 px-2">
+                      <div className="text-xs font-bold text-white truncate">
                         Private Channel: {activeChatConversation.customerName}
                       </div>
-                      <div className="text-[10px] text-gray-400">
+                      <div className="text-[10px] text-gray-400 truncate">
                         Sender Identity: <strong>Company Support</strong>
                       </div>
                     </div>
-                    <div className="w-20 text-right text-[10px] text-emerald-400 font-bold">
-                      ● Active
-                    </div>
+                    <button
+                      onClick={() => setActiveChatConversation(null)}
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-gray-300 hover:text-white rounded-lg flex items-center justify-center cursor-pointer transition-colors shadow-xs"
+                      title="Close Chat"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
 
                   <div className="flex-1 min-h-0">
@@ -1266,6 +1273,7 @@ export const SubAdminDashboard: React.FC = () => {
                         role: 'sub_admin',
                         fullName: 'Company Support'
                       }}
+                      onReturn={() => setActiveChatConversation(null)}
                       onClose={() => setActiveChatConversation(null)}
                     />
                   </div>

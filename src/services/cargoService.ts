@@ -866,14 +866,28 @@ export async function editMessage(
     if (!snap.exists()) return;
     const current = snap.data() as ChatMessage;
 
+    // Preserve the original sub admin message text so sub admin continues to see it
+    const originalText = current.originalText || current.text;
+
     await updateDoc(doc(db, 'messages', messageId), {
       customerDisplayText: newText,
-      // Original text remains untouched so sub admin continues to see his old message!
-      originalText: current.text,
+      originalText: originalText,
       isEdited: true,
       editedAt: new Date().toISOString(),
       editedBy
     });
+
+    // Update conversation lastMessage so customer sees the new message preview
+    if (current.conversationId) {
+      try {
+        await updateDoc(doc(db, 'conversations', current.conversationId), {
+          lastMessage: newText,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (convErr) {
+        console.warn('Notice updating conversation preview:', convErr);
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }

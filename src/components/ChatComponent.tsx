@@ -19,7 +19,8 @@ import {
   Mic,
   Lock,
   Users,
-  CheckCircle2
+  CheckCircle2,
+  ArrowLeft
 } from 'lucide-react';
 import { ChatMessage, Conversation, UserRole, UserProfile } from '../types';
 import {
@@ -37,12 +38,14 @@ interface ChatComponentProps {
   conversation: Conversation;
   currentUserProfile: UserProfile;
   onClose?: () => void;
+  onReturn?: () => void;
 }
 
 export const ChatComponent: React.FC<ChatComponentProps> = ({
   conversation,
   currentUserProfile,
-  onClose
+  onClose,
+  onReturn
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -248,38 +251,38 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const isSubAdmin = currentUserProfile.role === 'sub_admin';
   const isCustomer = currentUserProfile.role === 'customer';
 
-  // Get displayed text depending on viewer role
+  // User requested: "super admin can edit sub admin message to customer, but sub admin will still see his old message, only the customer will see the new message"
   const getMessageDisplayText = (msg: ChatMessage): string => {
+    if (isSubAdmin) {
+      // Sub Admin ALWAYS continues to see his old/original message as requested!
+      return msg.originalText || msg.text;
+    }
     if (isCustomer) {
-      // Customer sees the edited message if Super Admin modified it
+      // Customer ONLY sees the new message edited by Super Admin!
       return msg.customerDisplayText || msg.text;
     }
-    if (isSubAdmin) {
-      // Sub Admin continues to see his old/original message as requested!
-      return msg.text;
-    }
-    // Super Admin sees customer-facing text (or original)
+    // Super Admin sees customer-facing text (new message)
     return msg.customerDisplayText || msg.text;
   };
 
   return (
     <div className="flex flex-col h-[620px] sm:h-[calc(100vh-140px)] min-h-[560px] max-h-[88vh] bg-slate-50 border border-gray-200 rounded-2xl overflow-hidden shadow-lg w-full">
-      {/* Chat Header - Compact Sleek Header */}
-      <div className="bg-[#0b132b] text-white px-4 sm:px-5 py-2.5 sm:py-3 flex items-center justify-between border-b border-[#1c2541]">
-        <div className="flex items-center space-x-2.5 sm:space-x-3">
+      {/* Chat Header - Compact Sleek Header with Return icon and X close button */}
+      <div className="bg-[#0b132b] text-white px-3 sm:px-5 py-2.5 sm:py-3 flex items-center justify-between border-b border-[#1c2541] gap-2">
+        <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
           <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-xs sm:text-sm shadow-inner text-white shrink-0">
             {isCustomer ? <Shield className="w-4 h-4 text-white" /> : conversation.customerName.charAt(0)}
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center space-x-1.5 sm:space-x-2">
-              <h3 className="font-bold text-xs sm:text-sm tracking-wide">
+              <h3 className="font-bold text-xs sm:text-sm tracking-wide truncate">
                 {isCustomer ? 'Company Support' : conversation.customerName}
               </h3>
-              <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.2 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+              <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.2 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 shrink-0">
                 {isCustomer ? 'Official Support Desk' : 'Verified Consignee'}
               </span>
             </div>
-            <p className="text-xs text-gray-400">
+            <p className="text-[11px] sm:text-xs text-gray-400 truncate">
               {isCustomer ? (
                 <span>24/7 Dedicated Logistics Support & Tracking Assistance</span>
               ) : (
@@ -296,13 +299,25 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
-          {onClose && (
+        {/* Action Controls: Return icon and X close button */}
+        <div className="flex items-center space-x-1.5 shrink-0">
+          {(onReturn || onClose) && (
             <button
-              onClick={onClose}
-              className="p-1.5 rounded-xl text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              onClick={onReturn || onClose}
+              className="px-2.5 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-white flex items-center space-x-1.5 cursor-pointer border border-blue-400/30 transition-all text-xs font-bold shadow-xs"
+              title="Return to previous screen"
             >
-              <X className="w-5 h-5" />
+              <ArrowLeft className="w-4 h-4 text-white" />
+              <span className="hidden sm:inline">Return</span>
+            </button>
+          )}
+          {(onClose || onReturn) && (
+            <button
+              onClick={onClose || onReturn}
+              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-gray-300 hover:text-white transition-colors cursor-pointer border border-slate-700 shadow-xs"
+              title="Close Chat"
+            >
+              <X className="w-4 h-4" />
             </button>
           )}
         </div>
@@ -442,28 +457,29 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                       : 'bg-white border border-gray-200 text-gray-800 rounded-tl-none self-start shadow-xs'
                   }`}
                 >
-                  {/* Super Admin Control Actions (Edit / Delete / Visibility) */}
+                  {/* Super Admin Control Actions (Edit for Customer / Delete) */}
                   {isSuperAdmin && !msg.isDeleted && (
-                    <div className="absolute right-2 -top-3.5 hidden group-hover:flex items-center space-x-1 bg-slate-900 text-white px-2 py-1 rounded-lg shadow-md z-10 text-[10px]">
+                    <div className="flex items-center space-x-1.5 mt-2 pt-1.5 border-t border-black/10 text-[10px]">
                       {/* Edit button: Super Admin can edit Sub-Admin messages so customer sees edited text while Sub-Admin continues to see original! */}
                       <button
                         onClick={() => {
                           setEditingMessage(msg);
                           setEditText(msg.customerDisplayText || msg.text);
                         }}
-                        className="px-1.5 py-0.5 hover:text-amber-400 flex items-center space-x-1 transition-colors cursor-pointer"
+                        className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 font-bold flex items-center space-x-1 transition-colors cursor-pointer border border-amber-500/30 shadow-2xs"
                         title="Edit Customer-Facing Text (Sub-Admin will continue to see their original message)"
                       >
-                        <Edit2 className="w-3 h-3" />
+                        <Edit2 className="w-3 h-3 text-amber-600" />
                         <span>Edit for Customer</span>
                       </button>
 
                       <button
                         onClick={() => handleDelete(msg)}
-                        className="px-1.5 py-0.5 hover:text-red-400 flex items-center space-x-1 transition-colors cursor-pointer border-l border-slate-700"
+                        className="px-2 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-900 font-bold flex items-center space-x-1 transition-colors cursor-pointer border border-red-500/30 shadow-2xs"
                         title="Delete Message"
                       >
-                        <Trash2 className="w-3 h-3" />
+                        <Trash2 className="w-3 h-3 text-red-600" />
+                        <span>Delete</span>
                       </button>
                     </div>
                   )}
