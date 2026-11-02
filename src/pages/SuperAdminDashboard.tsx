@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Users,
   Shield,
+  ShieldCheck,
   Package,
   CheckCircle2,
   Clock,
@@ -819,7 +820,7 @@ export const SuperAdminDashboard: React.FC = () => {
       )}
 
       {/* Main Admin Content Layout: Sider Drawer & Full Screen Function Area */}
-      <div className="flex-1 flex flex-col lg:flex-row w-full max-w-7xl mx-auto p-2 sm:p-4 lg:p-6 gap-4 sm:gap-6 min-w-0 relative">
+      <div className="flex-1 flex flex-col lg:flex-row w-full max-w-7xl mx-auto p-2 sm:p-4 lg:p-6 pb-24 lg:pb-8 gap-4 sm:gap-6 min-w-0 relative">
         {/* Navigation Sidebar Drawer */}
         <aside
           className={`
@@ -3072,11 +3073,87 @@ export const SuperAdminDashboard: React.FC = () => {
 
       {/* FLOATING TOAST NOTIFICATION */}
       {toastNotification && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-2xl text-xs font-bold text-white transition-all transform animate-fadeIn border backdrop-blur-md bg-slate-900/95 border-slate-700">
+        <div className="fixed bottom-20 lg:bottom-6 right-4 sm:right-6 z-50 flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-2xl text-xs font-bold text-white transition-all transform animate-fadeIn border backdrop-blur-md bg-slate-900/95 border-slate-700">
           <span className={`w-2 h-2 rounded-full ${toastNotification.type === 'success' ? 'bg-emerald-400' : 'bg-red-400'} animate-pulse`} />
           <span>{toastNotification.text}</span>
         </div>
       )}
+
+      {/* SUPER ADMIN MOBILE BOTTOM APP BAR */}
+      <nav aria-label="Super Admin Mobile Navigation" className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0b132b]/95 backdrop-blur-md border-t border-[#1c2541] px-1.5 py-1.5 flex items-center justify-around shadow-2xl">
+        <button
+          onClick={() => {
+            setActiveSection('overview');
+            setSidebarOpen(false);
+          }}
+          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer ${
+            activeSection === 'overview' ? 'text-amber-400 bg-amber-500/15' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <CheckCircle2 className="w-5 h-5 mb-0.5" />
+          <span>Overview</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveSection('subadmins');
+            setSidebarOpen(false);
+          }}
+          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all relative cursor-pointer ${
+            activeSection === 'subadmins' ? 'text-amber-400 bg-amber-500/15' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <ShieldCheck className="w-5 h-5 mb-0.5" />
+          <span>Sub-Admins</span>
+          <span className="text-[9px] opacity-75">{subAdmins.length}</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveSection('customers');
+            setSidebarOpen(false);
+          }}
+          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all relative cursor-pointer ${
+            activeSection === 'customers' ? 'text-amber-400 bg-amber-500/15' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <Users className="w-5 h-5 mb-0.5" />
+          <span>Customers</span>
+          <span className="text-[9px] opacity-75">{customers.length}</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveSection('messages');
+            setSidebarOpen(false);
+          }}
+          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all relative cursor-pointer ${
+            activeSection === 'messages' ? 'text-amber-400 bg-amber-500/15' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <MessageSquare className="w-5 h-5 mb-0.5" />
+          <span>Chat Hub</span>
+          {conversations.length > 0 && (
+            <span className="absolute top-0 right-1 bg-amber-500 text-gray-950 text-[9px] px-1 rounded-full font-bold">
+              {conversations.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveSection('shipments');
+            setSidebarOpen(false);
+          }}
+          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all relative cursor-pointer ${
+            activeSection === 'shipments' ? 'text-amber-400 bg-amber-500/15' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <Package className="w-5 h-5 mb-0.5" />
+          <span>Shipments</span>
+          <span className="text-[9px] opacity-75">{shipments.length}</span>
+        </button>
+      </nav>
     </div>
   );
 };

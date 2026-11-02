@@ -160,6 +160,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
         conversationId: conversation.id,
         senderId: currentUserProfile.uid,
         senderName: currentUserProfile.fullName,
+        senderEmail: currentUserProfile.email || '',
         senderRole: currentUserProfile.role,
         recipientId,
         recipientRole,
@@ -368,11 +369,21 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
           </div>
         ) : (
           messages.map((msg) => {
-            const isMe = msg.senderId === currentUserProfile.uid;
-            const displayText = getMessageDisplayText(msg);
             const isCustomerMsg = msg.senderRole === 'customer';
             const isSubAdminMsg = msg.senderRole === 'sub_admin';
             const isSuperAdminMsg = msg.senderRole === 'super_admin';
+
+            // User requested: "chatting my own message supposed stay at right hand why the person sending message stays at left side"
+            // Ensure any message originating from the currently viewing user is always on the RIGHT (isMe = true)
+            const isMe = Boolean(
+              (msg.senderId && currentUserProfile.uid && msg.senderId === currentUserProfile.uid) ||
+              (msg.senderEmail && currentUserProfile.email && msg.senderEmail.toLowerCase().trim() === currentUserProfile.email.toLowerCase().trim()) ||
+              (isCustomer && isCustomerMsg) ||
+              (isSubAdmin && (isSubAdminMsg || msg.senderId === currentUserProfile.uid)) ||
+              (isSuperAdmin && (isSuperAdminMsg || msg.senderId === currentUserProfile.uid))
+            );
+
+            const displayText = getMessageDisplayText(msg);
 
             // When viewed by a customer, ALL messages from super_admin or sub_admin are presented as "Company Support"
             const displayedSenderName = isCustomer
@@ -382,11 +393,13 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             return (
               <div
                 key={msg.id}
-                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} space-y-1.5`}
+                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} space-y-1 w-full`}
               >
                 {/* Sender Identity & Role Badge */}
-                <div className="flex items-center space-x-1.5 text-[11px] px-1">
-                  <span className="font-bold text-gray-700">{displayedSenderName}</span>
+                <div className={`flex items-center space-x-1.5 text-[11px] px-1 ${isMe ? 'flex-row-reverse space-x-reverse' : ''}`}>
+                  <span className={`font-bold ${isMe ? 'text-blue-600' : 'text-gray-700'}`}>
+                    {isMe ? 'You' : displayedSenderName}
+                  </span>
                   {isCustomer ? (
                     !isCustomerMsg ? (
                       <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 text-[9px] font-black uppercase border border-blue-200 flex items-center space-x-1">
@@ -421,12 +434,12 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
                 {/* Bubble Container */}
                 <div
-                  className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-3 shadow-xs relative group ${
+                  className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-2.5 shadow-xs relative group ${
                     isMe
                       ? isSuperAdminMsg
-                        ? 'bg-gradient-to-br from-amber-600 to-amber-700 text-white rounded-tr-none'
-                        : 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white rounded-tr-none'
-                      : 'bg-white border border-gray-200 text-gray-800 rounded-tl-none'
+                        ? 'bg-gradient-to-br from-amber-600 to-amber-700 text-white rounded-tr-none self-end'
+                        : 'bg-blue-600 text-white rounded-tr-none self-end shadow-sm'
+                      : 'bg-white border border-gray-200 text-gray-800 rounded-tl-none self-start shadow-xs'
                   }`}
                 >
                   {/* Super Admin Control Actions (Edit / Delete / Visibility) */}

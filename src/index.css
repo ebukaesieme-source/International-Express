@@ -1,11 +1,23 @@
 @import "tailwindcss";
 
 @layer base {
-  body {
+  html, body {
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     color: #f8fafc;
     background-color: #0b132b;
     overflow-x: hidden;
+    max-width: 100vw;
+    width: 100%;
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior-y: none;
+  }
+
+  /* Prevent iOS Safari and Android Chrome from auto-zooming in on input focus */
+  @media (max-width: 768px) {
+    input, textarea, select {
+      font-size: 16px !important;
+    }
   }
 }
 

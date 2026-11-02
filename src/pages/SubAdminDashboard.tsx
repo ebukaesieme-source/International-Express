@@ -637,185 +637,206 @@ export const SubAdminDashboard: React.FC = () => {
         </div>
       </header>
 
+      {/* Mobile Drawer Backdrop when sidebar is open on mobile */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-50 lg:hidden transition-opacity"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* MAIN CONTAINER */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 flex gap-6">
-        {/* SIDEBAR NAVIGATION */}
-        {sidebarOpen && (
-          <aside className="w-64 bg-white rounded-2xl border border-gray-200 shadow-xs p-4 flex flex-col shrink-0 space-y-4 h-fit">
-            <div className="pb-3 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] font-black uppercase tracking-wider text-gray-400">Dispatch Desk</div>
-                <div className="text-xs font-bold text-gray-800">Operational Tools</div>
+      <div className="flex-1 max-w-7xl w-full mx-auto p-2 sm:p-4 lg:p-6 pb-24 lg:pb-8 flex flex-col lg:flex-row gap-4 sm:gap-6 min-w-0 relative">
+        {/* SIDEBAR NAVIGATION: Off-canvas drawer on mobile, static on desktop */}
+        <aside
+          className={`
+            fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white p-4 shadow-2xl flex flex-col space-y-4 transition-transform duration-200
+            lg:static lg:z-auto lg:shadow-xs lg:rounded-2xl lg:border lg:border-gray-200 lg:transition-none lg:w-64 lg:h-fit shrink-0
+            ${sidebarOpen ? 'translate-x-0 flex' : '-translate-x-full hidden lg:hidden'}
+          `}
+        >
+          <div className="pb-3 border-b border-gray-100 flex items-center justify-between">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-wider text-gray-400">Dispatch Desk</div>
+              <div className="text-xs font-bold text-gray-800">Operational Tools</div>
+            </div>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer"
+              title="Close drawer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <nav className="space-y-1">
+            {/* 1. Overview */}
+            <button
+              onClick={() => {
+                setActiveTab('overview');
+                setActiveChatConversation(null);
+                setSidebarOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'overview'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Overview</span>
               </div>
-              <button
-                onClick={() => setSidebarOpen(false)}
-                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
-                title="Hide sidebar (Full Screen)"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+            </button>
 
-            <nav className="space-y-1">
-              {/* 1. Overview */}
-              <button
-                onClick={() => {
-                  setActiveTab('overview');
-                  setActiveChatConversation(null);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'overview'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-slate-50'
+            {/* 2. My Customers */}
+            <button
+              onClick={() => {
+                setActiveTab('customers');
+                setActiveChatConversation(null);
+                setSidebarOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'customers'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <Users className="w-4 h-4" />
+                <span>My Customers</span>
+              </div>
+              <span
+                className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
+                  activeTab === 'customers' ? 'bg-blue-500 text-white' : 'bg-slate-100 text-gray-600'
                 }`}
               >
-                <div className="flex items-center space-x-2.5">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Overview</span>
-                </div>
-              </button>
+                {totalAssignedCustomers}
+              </span>
+            </button>
 
-              {/* 2. My Customers */}
-              <button
-                onClick={() => {
-                  setActiveTab('customers');
-                  setActiveChatConversation(null);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'customers'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center space-x-2.5">
-                  <Users className="w-4 h-4" />
-                  <span>My Customers</span>
-                </div>
-                <span
-                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                    activeTab === 'customers' ? 'bg-blue-500 text-white' : 'bg-slate-100 text-gray-600'
-                  }`}
-                >
-                  {totalAssignedCustomers}
+            {/* 3. Customer Messages */}
+            <button
+              onClick={() => {
+                setActiveTab('messages');
+                setSidebarOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'messages'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <MessageSquare className="w-4 h-4" />
+                <span>Customer Messages</span>
+              </div>
+              {totalUnreadMessages > 0 && (
+                <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-extrabold animate-pulse">
+                  {totalUnreadMessages}
                 </span>
-              </button>
+              )}
+            </button>
 
-              {/* 3. Customer Messages */}
-              <button
-                onClick={() => setActiveTab('messages')}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'messages'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-slate-50'
+            {/* 4. Create Delivery */}
+            <button
+              onClick={() => {
+                setActiveTab('create_delivery');
+                setActiveChatConversation(null);
+                setSidebarOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'create_delivery'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <Plus className="w-4 h-4" />
+                <span>Create Delivery</span>
+              </div>
+            </button>
+
+            {/* 5. Delivery Management */}
+            <button
+              onClick={() => {
+                setActiveTab('deliveries');
+                setActiveChatConversation(null);
+                setSidebarOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'deliveries'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <Package className="w-4 h-4" />
+                <span>Delivery Management</span>
+              </div>
+              <span
+                className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
+                  activeTab === 'deliveries' ? 'bg-blue-500 text-white' : 'bg-slate-100 text-gray-600'
                 }`}
               >
-                <div className="flex items-center space-x-2.5">
-                  <MessageSquare className="w-4 h-4" />
-                  <span>Customer Messages</span>
-                </div>
-                {totalUnreadMessages > 0 && (
-                  <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-extrabold animate-pulse">
-                    {totalUnreadMessages}
-                  </span>
-                )}
-              </button>
+                {totalDeliveries}
+              </span>
+            </button>
 
-              {/* 4. Create Delivery */}
-              <button
-                onClick={() => {
-                  setActiveTab('create_delivery');
-                  setActiveChatConversation(null);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'create_delivery'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center space-x-2.5">
-                  <Plus className="w-4 h-4" />
-                  <span>Create Delivery</span>
-                </div>
-              </button>
+            {/* 6. Tracking Control */}
+            <button
+              onClick={() => {
+                setActiveTab('tracking');
+                setActiveChatConversation(null);
+                setSidebarOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'tracking'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <Navigation className="w-4 h-4" />
+                <span>Tracking Control</span>
+              </div>
+            </button>
 
-              {/* 5. Delivery Management */}
-              <button
-                onClick={() => {
-                  setActiveTab('deliveries');
-                  setActiveChatConversation(null);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'deliveries'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center space-x-2.5">
-                  <Package className="w-4 h-4" />
-                  <span>Delivery Management</span>
-                </div>
-                <span
-                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                    activeTab === 'deliveries' ? 'bg-blue-500 text-white' : 'bg-slate-100 text-gray-600'
-                  }`}
-                >
-                  {totalDeliveries}
+            {/* 7. Notifications */}
+            <button
+              onClick={() => {
+                setActiveTab('notifications');
+                setActiveChatConversation(null);
+                setSidebarOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'notifications'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <Bell className="w-4 h-4" />
+                <span>Notifications</span>
+              </div>
+              {unreadNotificationsCount > 0 && (
+                <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                  {unreadNotificationsCount}
                 </span>
-              </button>
+              )}
+            </button>
+          </nav>
 
-              {/* 6. Tracking Control */}
-              <button
-                onClick={() => {
-                  setActiveTab('tracking');
-                  setActiveChatConversation(null);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'tracking'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center space-x-2.5">
-                  <Navigation className="w-4 h-4" />
-                  <span>Tracking Control</span>
-                </div>
-              </button>
-
-              {/* 7. Notifications */}
-              <button
-                onClick={() => {
-                  setActiveTab('notifications');
-                  setActiveChatConversation(null);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'notifications'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center space-x-2.5">
-                  <Bell className="w-4 h-4" />
-                  <span>Notifications</span>
-                </div>
-                {unreadNotificationsCount > 0 && (
-                  <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold">
-                    {unreadNotificationsCount}
-                  </span>
-                )}
-              </button>
-            </nav>
-
-            <div className="pt-3 border-t border-gray-100 text-[11px] text-gray-500 space-y-1">
-              <div className="font-bold text-gray-700">Access Scope:</div>
-              <p className="text-[10px] leading-tight text-gray-400">
-                You only have operational access to customers and deliveries assigned to you by Main Admin.
-              </p>
-            </div>
-          </aside>
-        )}
+          <div className="pt-3 border-t border-gray-100 text-[11px] text-gray-500 space-y-1">
+            <div className="font-bold text-gray-700">Access Scope:</div>
+            <p className="text-[10px] leading-tight text-gray-400">
+              You only have operational access to customers and deliveries assigned to you by Main Admin.
+            </p>
+          </div>
+        </aside>
 
         {/* CONTENT AREA */}
-        <main className="flex-1 min-w-0 space-y-6">
+        <main className="flex-1 min-w-0 space-y-4 sm:space-y-6">
           {/* SECTION 1: OVERVIEW */}
           {activeTab === 'overview' && (
             <div className="space-y-6 animate-fadeIn">
@@ -2397,6 +2418,89 @@ export const SubAdminDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* SUB ADMIN MOBILE BOTTOM APP BAR */}
+      <nav aria-label="Mobile Navigation" className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0b132b]/95 backdrop-blur-md border-t border-[#1c2541] px-2 py-1.5 flex items-center justify-around shadow-2xl">
+        <button
+          onClick={() => {
+            setActiveTab('overview');
+            setActiveChatConversation(null);
+            setSidebarOpen(false);
+          }}
+          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer ${
+            activeTab === 'overview' ? 'text-blue-400 bg-blue-500/15' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <CheckCircle2 className="w-5 h-5 mb-0.5" />
+          <span>Overview</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('customers');
+            setActiveChatConversation(null);
+            setSidebarOpen(false);
+          }}
+          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all relative cursor-pointer ${
+            activeTab === 'customers' ? 'text-blue-400 bg-blue-500/15' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <Users className="w-5 h-5 mb-0.5" />
+          <span>Customers</span>
+          {totalAssignedCustomers > 0 && (
+            <span className="absolute top-0 right-1 bg-blue-500 text-white text-[9px] px-1 rounded-full font-bold">
+              {totalAssignedCustomers}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('messages');
+            setSidebarOpen(false);
+          }}
+          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all relative cursor-pointer ${
+            activeTab === 'messages' ? 'text-blue-400 bg-blue-500/15' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <MessageSquare className="w-5 h-5 mb-0.5" />
+          <span>Messages</span>
+          {totalUnreadMessages > 0 && (
+            <span className="absolute top-0 right-1 bg-red-500 text-white text-[9px] px-1 rounded-full font-bold animate-pulse">
+              {totalUnreadMessages}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('deliveries');
+            setActiveChatConversation(null);
+            setSidebarOpen(false);
+          }}
+          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all relative cursor-pointer ${
+            activeTab === 'deliveries' ? 'text-blue-400 bg-blue-500/15' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <Package className="w-5 h-5 mb-0.5" />
+          <span>Deliveries</span>
+          <span className="text-[9px] opacity-75">{totalDeliveries}</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('tracking');
+            setActiveChatConversation(null);
+            setSidebarOpen(false);
+          }}
+          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer ${
+            activeTab === 'tracking' ? 'text-blue-400 bg-blue-500/15' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <Navigation className="w-5 h-5 mb-0.5" />
+          <span>Tracking</span>
+        </button>
+      </nav>
     </div>
   );
 };

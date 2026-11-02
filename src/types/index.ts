@@ -153,6 +153,7 @@ export interface ChatMessage {
   conversationId: string;
   senderId: string;
   senderName: string;
+  senderEmail?: string;
   senderRole: UserRole;
   recipientId: string;
   recipientRole: string;
