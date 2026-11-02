@@ -84,6 +84,7 @@ import {
   confirmPayment
 } from '../services/cargoService';
 import { ChatComponent } from '../components/ChatComponent';
+import { TrackingSection } from '../components/TrackingSection';
 
 export const SuperAdminDashboard: React.FC = () => {
   const { userProfile, logout, changeSuperAdminPassword, updateSuperAdminProfile } = useAuth();
@@ -175,39 +176,8 @@ export const SuperAdminDashboard: React.FC = () => {
     setTimeout(() => setToastNotification(null), 4000);
   };
 
-  // Shipment Create / Edit Modal
-  const [showShipmentModal, setShowShipmentModal] = useState(false);
-  const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
-  const [shipmentForm, setShipmentForm] = useState({
-    trackingNumber: '',
-    customerId: '',
-    customerName: '',
-    customerEmail: '',
-    subAdminId: '',
-    subAdminName: '',
-    description: '',
-    packageType: 'Air Cargo Crate',
-    weightKg: 25,
-    pieces: 1,
-    senderName: '',
-    senderAddress: '',
-    senderCountry: 'United States',
-    recipientName: '',
-    recipientAddress: '',
-    recipientCountry: 'United Kingdom',
-    departureLocation: 'JFK Airport, New York',
-    destinationLocation: 'Heathrow Airport, London',
-    currentLocation: 'JFK Airport Terminal 4',
-    carrier: 'Boeing 747-8F Heavy Freight',
-    status: 'registered' as ShipmentStatus,
-    deliveryProgressPercentage: 35,
-    estimatedDeliveryDate: new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString().split('T')[0],
-    customsDutyAmount: 250,
-    customsDutyCurrency: 'USD',
-    customsPaymentStatus: 'pending' as CustomsPaymentStatus,
-    feePurpose: 'Bonded Inspection & Customs Tariffs',
-    customsNotes: ''
-  });
+  // Delivery tracking preview modal (Super Admin has oversight preview only; delivery management is strictly Sub-Admin)
+  const [trackingPreviewCode, setTrackingPreviewCode] = useState<string | null>(null);
 
   // Active Chat Modal / Drawer
   const [activeChatConversation, setActiveChatConversation] = useState<Conversation | null>(null);
@@ -615,90 +585,6 @@ export const SuperAdminDashboard: React.FC = () => {
     }
   };
 
-  // Shipment Form submit
-  const handleSaveShipment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      if (editingShipment) {
-        await updateShipment(
-          editingShipment.id,
-          {
-            ...shipmentForm,
-            trackingNumber: shipmentForm.trackingNumber.toUpperCase()
-          },
-          userProfile?.fullName || 'Super Admin',
-          'super_admin'
-        );
-        await addAuditLog(
-          'shipment_updated',
-          userProfile?.fullName || 'Super Admin',
-          'super_admin',
-          `Super Admin updated shipment ${shipmentForm.trackingNumber}. Status: ${shipmentForm.status}`
-        );
-      } else {
-        const tracking = shipmentForm.trackingNumber.trim().toUpperCase() ||
-          `IEC-${Math.floor(100000 + Math.random() * 900000)}-EXP`;
-
-        await createShipment(
-          {
-            ...shipmentForm,
-            trackingNumber: tracking
-          },
-          userProfile?.fullName || 'Super Admin',
-          'super_admin'
-        );
-        await addAuditLog(
-          'shipment_created',
-          userProfile?.fullName || 'Super Admin',
-          'super_admin',
-          `Super Admin created new cargo consignment with tracking code ${tracking}`
-        );
-      }
-
-      setShowShipmentModal(false);
-      setEditingShipment(null);
-      loadAllData();
-    } catch (err) {
-      console.error(err);
-      alert('Failed to save shipment.');
-    }
-  };
-
-  const handleOpenEditShipment = (s: Shipment) => {
-    setEditingShipment(s);
-    setShipmentForm({
-      trackingNumber: s.trackingNumber,
-      customerId: s.customerId,
-      customerName: s.customerName,
-      customerEmail: s.customerEmail,
-      subAdminId: s.subAdminId,
-      subAdminName: s.subAdminName,
-      description: s.description,
-      packageType: s.packageType,
-      weightKg: s.weightKg,
-      pieces: s.pieces || 1,
-      senderName: s.senderName,
-      senderAddress: s.senderAddress,
-      senderCountry: s.senderCountry,
-      recipientName: s.recipientName,
-      recipientAddress: s.recipientAddress,
-      recipientCountry: s.recipientCountry,
-      departureLocation: s.departureLocation,
-      destinationLocation: s.destinationLocation,
-      currentLocation: s.currentLocation || '',
-      carrier: s.carrier,
-      status: s.status,
-      deliveryProgressPercentage: s.deliveryProgressPercentage ?? 35,
-      estimatedDeliveryDate: s.estimatedDeliveryDate,
-      customsDutyAmount: s.customsDutyAmount,
-      customsDutyCurrency: s.customsDutyCurrency,
-      customsPaymentStatus: s.customsPaymentStatus,
-      feePurpose: s.feePurpose || 'Bonded Inspection & Customs Tariffs',
-      customsNotes: s.customsNotes || ''
-    });
-    setShowShipmentModal(true);
-  };
-
   const handleDeleteShipment = async (s: Shipment) => {
     if (!confirm(`Permanently remove shipment record ${s.trackingNumber}?`)) return;
     try {
@@ -884,7 +770,7 @@ export const SuperAdminDashboard: React.FC = () => {
               >
                 <div className="flex items-center space-x-2.5 min-w-0">
                   <Package className="w-4 h-4 shrink-0" />
-                  <span className="truncate">Shipments</span>
+                  <span className="truncate">Consignments (Audit)</span>
                 </div>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 shrink-0">
                   {shipments.length}
@@ -1550,21 +1436,33 @@ export const SuperAdminDashboard: React.FC = () => {
             <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
                 <div>
-                  <h2 className="text-lg font-black text-gray-900">Shipment Administration Overview</h2>
-                  <p className="text-xs text-gray-500">
-                    Super Admin master control of all consignments, customs duties, and delivery statuses.
+                  <div className="flex items-center space-x-2">
+                    <h2 className="text-lg font-black text-gray-900">Consignments Global Oversight</h2>
+                    <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200">
+                      Managed Exclusively by Sub-Admins
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Global view of active deliveries. Delivery creation, package photos, live movement adjustments, and itemized fee assessments are strictly operated by assigned Sub-Admin dispatchers.
                   </p>
                 </div>
-                <button
-                  onClick={() => {
-                    setEditingShipment(null);
-                    setShowShipmentModal(true);
-                  }}
-                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-md flex items-center space-x-2 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Generate New Shipment</span>
-                </button>
+
+                <div className="flex items-center space-x-2">
+                  <span className="px-3 py-1.5 rounded-xl bg-slate-100 text-gray-700 text-xs font-bold font-mono">
+                    Total: {shipments.length} Consignment(s)
+                  </span>
+                </div>
+              </div>
+
+              {/* Notice Banner */}
+              <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl flex items-start space-x-3 text-xs text-blue-950">
+                <ShieldCheck className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <strong className="font-extrabold text-blue-900 block">Strict Separation of Capabilities:</strong>
+                  <p className="text-blue-800">
+                    Only Sub-Admins have Delivery Tracking & Management capabilities: creating deliveries, uploading multiple package product images, scrolling movement progress % to any level, entering actual location names, and adding itemized fees with payment purposes. Super Admin maintains customer assignment, dispatcher allocation, and message moderation.
+                  </p>
+                </div>
               </div>
 
               {/* Shipments Table */}
@@ -1573,10 +1471,11 @@ export const SuperAdminDashboard: React.FC = () => {
                   <thead className="bg-slate-50 text-gray-500 uppercase tracking-wider text-[10px] border-y border-gray-100">
                     <tr>
                       <th className="py-3 px-4">Waybill # & Carrier</th>
-                      <th className="py-3 px-4">Consignee & Dispatcher</th>
+                      <th className="py-3 px-4">Consignee Customer</th>
+                      <th className="py-3 px-4">Assigned Sub-Admin Dispatcher</th>
                       <th className="py-3 px-4">Corridor (Origin → Dest)</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4">Customs Duty</th>
+                      <th className="py-3 px-4">Status & Movement</th>
+                      <th className="py-3 px-4">Itemized Charges</th>
                       <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -1589,20 +1488,30 @@ export const SuperAdminDashboard: React.FC = () => {
                         </td>
                         <td className="py-3.5 px-4">
                           <div className="font-bold text-gray-800">{s.customerName}</div>
-                          <div className="text-gray-400 text-[10px]">Sub Admin: {s.subAdminName}</div>
+                          <div className="text-gray-400 text-[10px]">{s.customerEmail}</div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                            {s.subAdminName || 'Assigned Sub-Admin'}
+                          </span>
                         </td>
                         <td className="py-3.5 px-4 text-gray-600">
                           <div>{s.departureLocation}</div>
                           <div className="text-[11px] text-blue-600 font-semibold">→ {s.destinationLocation}</div>
                         </td>
                         <td className="py-3.5 px-4">
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase bg-blue-100 text-blue-800">
-                            {s.status.replace(/_/g, ' ')}
-                          </span>
+                          <div className="flex items-center space-x-1.5">
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase bg-blue-100 text-blue-800">
+                              {s.status.replace(/_/g, ' ')}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 text-gray-700">
+                              {s.deliveryProgressPercentage ?? 35}%
+                            </span>
+                          </div>
                         </td>
                         <td className="py-3.5 px-4">
                           <div className="font-bold text-amber-600 font-mono">
-                            {s.customsDutyCurrency} {s.customsDutyAmount?.toFixed(2)}
+                            {s.customsDutyCurrency || 'USD'} {s.customsDutyAmount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                           </div>
                           <span className={`text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded ${
                             s.customsPaymentStatus === 'paid'
@@ -1612,18 +1521,19 @@ export const SuperAdminDashboard: React.FC = () => {
                             {s.customsPaymentStatus}
                           </span>
                         </td>
-                        <td className="py-3.5 px-4 text-right space-x-2">
+                        <td className="py-3.5 px-4 text-right space-x-1.5">
                           <button
-                            onClick={() => handleOpenEditShipment(s)}
-                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer"
-                            title="Edit Consignment"
+                            onClick={() => setTrackingPreviewCode(s.trackingNumber)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 cursor-pointer inline-flex items-center space-x-1"
+                            title="Preview Customer Live Tracking Card"
                           >
-                            <Edit className="w-4 h-4" />
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Preview Card</span>
                           </button>
                           <button
                             onClick={() => handleDeleteShipment(s)}
-                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
-                            title="Delete Consignment"
+                            className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg cursor-pointer"
+                            title="Delete Consignment Record"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -2390,274 +2300,42 @@ export const SuperAdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* CREATE / EDIT SHIPMENT MODAL */}
-      {showShipmentModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl max-h-[85vh] overflow-y-auto space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
-              <h3 className="font-black text-lg text-gray-900">
-                {editingShipment ? 'Edit Shipment & Customs Information' : 'Create New International Shipment'}
-              </h3>
+      {/* LIVE CUSTOMER TRACKING CARD PREVIEW MODAL (Super Admin view only) */}
+      {trackingPreviewCode && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 z-50 overflow-y-auto animate-fadeIn">
+          <div className="bg-slate-100 rounded-3xl max-w-6xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6 shadow-2xl border border-gray-200">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-gray-200 bg-white p-4 rounded-2xl shadow-xs">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold">
+                  <Eye className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-gray-900 flex items-center space-x-2">
+                    <span>Live Customer Tracking Card (Read-Only Preview)</span>
+                    <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[9px] font-mono font-bold">
+                      EXACT CONSIGNEE VIEW
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-gray-500">
+                    Waybill: <strong className="font-mono text-gray-800">{trackingPreviewCode}</strong> • Delivery tracking & charges are managed exclusively by the assigned Sub-Admin.
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={() => {
-                  setShowShipmentModal(false);
-                  setEditingShipment(null);
-                }}
-                className="p-1 rounded-full text-gray-400 hover:text-gray-700"
+                type="button"
+                onClick={() => setTrackingPreviewCode(null)}
+                className="p-2 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                title="Close Preview"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveShipment} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Waybill / Tracking Code</label>
-                  <input
-                    type="text"
-                    value={shipmentForm.trackingNumber}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, trackingNumber: e.target.value.toUpperCase() })}
-                    placeholder="Leave empty to auto-generate"
-                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-mono uppercase"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Consignee Customer *</label>
-                  <select
-                    required
-                    value={shipmentForm.customerId}
-                    onChange={(e) => {
-                      const c = customers.find(x => x.uid === e.target.value);
-                      setShipmentForm({
-                        ...shipmentForm,
-                        customerId: e.target.value,
-                        customerName: c?.fullName || '',
-                        customerEmail: c?.email || '',
-                        recipientName: c?.fullName || shipmentForm.recipientName,
-                        recipientAddress: c?.address || shipmentForm.recipientAddress,
-                        recipientCountry: c?.country || shipmentForm.recipientCountry
-                      });
-                    }}
-                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-semibold"
-                  >
-                    <option value="">Select Consignee...</option>
-                    {customers.map((c) => (
-                      <option key={c.uid} value={c.uid}>
-                        {c.fullName} ({c.email})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Managing Sub Admin *</label>
-                  <select
-                    required
-                    value={shipmentForm.subAdminId}
-                    onChange={(e) => {
-                      const s = subAdmins.find(x => x.uid === e.target.value);
-                      setShipmentForm({
-                        ...shipmentForm,
-                        subAdminId: e.target.value,
-                        subAdminName: s?.fullName || ''
-                      });
-                    }}
-                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-semibold"
-                  >
-                    <option value="">Select Sub Admin Dispatcher...</option>
-                    {subAdmins.map((s) => (
-                      <option key={s.uid} value={s.uid}>
-                        {s.fullName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Carrier & Flight/Vessel</label>
-                  <input
-                    type="text"
-                    required
-                    value={shipmentForm.carrier}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, carrier: e.target.value })}
-                    placeholder="e.g. Boeing 747-8F / Flight IEC-890"
-                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Cargo Description</label>
-                <input
-                  type="text"
-                  required
-                  value={shipmentForm.description}
-                  onChange={(e) => setShipmentForm({ ...shipmentForm, description: e.target.value })}
-                  placeholder="e.g. Avionics, Microcontrollers & Spare Assemblies"
-                  className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs"
-                />
-              </div>
-
-              {/* Sender & Recipient */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-gray-100">
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-gray-400">Origin / Sender</span>
-                  <input
-                    type="text"
-                    required
-                    value={shipmentForm.senderName}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, senderName: e.target.value })}
-                    placeholder="Sender Name"
-                    className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-xs mt-1"
-                  />
-                  <input
-                    type="text"
-                    required
-                    value={shipmentForm.departureLocation}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, departureLocation: e.target.value })}
-                    placeholder="Departure Port / Airport"
-                    className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-xs mt-1"
-                  />
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-gray-400">Destination / Recipient</span>
-                  <input
-                    type="text"
-                    required
-                    value={shipmentForm.recipientName}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, recipientName: e.target.value })}
-                    placeholder="Recipient Name"
-                    className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-xs mt-1"
-                  />
-                  <input
-                    type="text"
-                    required
-                    value={shipmentForm.destinationLocation}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, destinationLocation: e.target.value })}
-                    placeholder="Destination Port / Airport"
-                    className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-xs mt-1"
-                  />
-                </div>
-              </div>
-
-              {/* Location & Delivery Moving Percentage Controls */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-blue-50/60 rounded-2xl border border-blue-100">
-                <div>
-                  <label className="block text-xs font-bold text-blue-900 mb-1">
-                    Current Location (Write Location at Every Change) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={shipmentForm.currentLocation}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, currentLocation: e.target.value })}
-                    placeholder="e.g. Frankfurt Cargo Hub Terminal 4"
-                    className="w-full px-3 py-2 bg-white border border-blue-300 rounded-xl text-xs font-bold"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs font-bold text-indigo-900">
-                      Delivery Moving Percentage
-                    </label>
-                    <span className="font-mono font-bold text-xs text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
-                      {shipmentForm.deliveryProgressPercentage}%
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={shipmentForm.deliveryProgressPercentage}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, deliveryProgressPercentage: parseInt(e.target.value, 10) })}
-                    className="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 mt-2"
-                  />
-                </div>
-              </div>
-
-              {/* Status & Customs */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Status</label>
-                  <select
-                    value={shipmentForm.status}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, status: e.target.value as ShipmentStatus })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-semibold"
-                  >
-                    <option value="registered">Registered</option>
-                    <option value="package_received">Package Received</option>
-                    <option value="processing">Processing</option>
-                    <option value="departure">Departure</option>
-                    <option value="in_transit">In Transit</option>
-                    <option value="arrival_destination">Arrival Destination</option>
-                    <option value="customs_processing">Customs Processing</option>
-                    <option value="out_for_delivery">Out for Delivery</option>
-                    <option value="delivered">Delivered</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Customs Fee Amount</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={shipmentForm.customsDutyAmount}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, customsDutyAmount: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Customs Status</label>
-                  <select
-                    value={shipmentForm.customsPaymentStatus}
-                    onChange={(e) => setShipmentForm({ ...shipmentForm, customsPaymentStatus: e.target.value as CustomsPaymentStatus })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-semibold"
-                  >
-                    <option value="pending">Pending</option>
-                    <option value="paid">Paid</option>
-                    <option value="partially_paid">Partially Paid</option>
-                    <option value="waived">Waived</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Purpose of the Fee (Write Custom Purpose)
-                </label>
-                <input
-                  type="text"
-                  value={shipmentForm.feePurpose}
-                  onChange={(e) => setShipmentForm({ ...shipmentForm, feePurpose: e.target.value })}
-                  placeholder="e.g. Airport Terminal Security Clearance & Customs Inspection Tariffs"
-                  className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs"
-                />
-              </div>
-
-              <div className="flex justify-end space-x-3 pt-3 border-t border-gray-100">
-                <button
-                  type="button"
-                  onClick={() => setShowShipmentModal(false)}
-                  className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-md"
-                >
-                  Save Consignment
-                </button>
-              </div>
-            </form>
+            <TrackingSection
+              initialTrackingNumber={trackingPreviewCode}
+              isModal={true}
+              onClose={() => setTrackingPreviewCode(null)}
+            />
           </div>
         </div>
       )}
