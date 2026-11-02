@@ -33,7 +33,15 @@ import {
   Building,
   User,
   ExternalLink,
-  ChevronRight
+  ChevronRight,
+  Camera,
+  Upload,
+  Radio,
+  Globe,
+  Compass,
+  CreditCard,
+  Box,
+  Plane
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -43,7 +51,8 @@ import {
   ShipmentStatus,
   CustomsPaymentStatus,
   TrackingEvent,
-  AppNotification
+  AppNotification,
+  ItemizedFee
 } from '../types';
 import {
   subscribeToSubAdminCustomers,
@@ -57,7 +66,10 @@ import {
   addTrackingCheckpointForSubAdmin,
   getOrCreateConversation,
   getTrackingEvents,
-  getStatusTitle
+  getStatusTitle,
+  addItemizedFee,
+  updateItemizedFee,
+  deleteItemizedFee
 } from '../services/cargoService';
 import { ChatComponent } from '../components/ChatComponent';
 
@@ -143,6 +155,24 @@ export const SubAdminDashboard: React.FC = () => {
   const [deliveryDutyPurpose, setDeliveryDutyPurpose] = useState('Bonded Inspection & Import Tariffs');
   const [creatingDelivery, setCreatingDelivery] = useState(false);
 
+  // Multiple Product Package Photos Upload State
+  const [deliveryPackageImages, setDeliveryPackageImages] = useState<string[]>([
+    'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=900&q=80',
+    'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=900&q=80',
+    'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=900&q=80'
+  ]);
+  const [packagePhotoUrlInput, setPackagePhotoUrlInput] = useState('');
+
+  // Itemized Fee Management State (Sub-Admin add fee, more and more, write purpose)
+  const [feeManagingShipment, setFeeManagingShipment] = useState<Shipment | null>(null);
+  const [newFeeTitle, setNewFeeTitle] = useState('');
+  const [newFeePurpose, setNewFeePurpose] = useState('');
+  const [newFeeAmount, setNewFeeAmount] = useState<number>(0);
+  const [newFeeCurrency, setNewFeeCurrency] = useState('USD');
+  const [newFeeStatus, setNewFeeStatus] = useState<'pending' | 'paid'>('pending');
+  const [savingFee, setSavingFee] = useState(false);
+  const [checkpointFacility, setCheckpointFacility] = useState('');
+
   // Edit Delivery Modal State
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -201,6 +231,10 @@ export const SubAdminDashboard: React.FC = () => {
       if (shipmentList.length > 0 && !selectedTrackingShipmentId) {
         setSelectedTrackingShipmentId(shipmentList[0].id);
       }
+      setFeeManagingShipment((curr) => {
+        if (!curr) return null;
+        return shipmentList.find((s) => s.id === curr.id) || curr;
+      });
     });
 
     // 3. Subscribe to conversations for this Sub-Admin
@@ -360,12 +394,34 @@ export const SubAdminDashboard: React.FC = () => {
           customsDutyAmount: Number(deliveryDutyAmount) || 0,
           customsDutyCurrency: deliveryDutyCurrency,
           customsPaymentStatus: 'pending',
-          feePurpose: deliveryDutyPurpose
+          feePurpose: deliveryDutyPurpose,
+          pickupAddress: deliveryDeparture + ' ; ' + deliverySenderAddress,
+          deliveryAddress: deliveryRecipientAddress + ', ' + (deliveryRecipientCountry || 'United States'),
+          packageImages: deliveryPackageImages,
+          photos: deliveryPackageImages.map((url, i) => ({
+            id: `pkg-${Date.now()}-${i}`,
+            name: `Package Product #${i + 1}`,
+            url,
+            caption: `Verified Product Package Photo #${i + 1}`,
+            uploadedAt: new Date().toISOString()
+          })),
+          itemizedFees: deliveryDutyAmount > 0 ? [
+            {
+              id: 'fee_init_' + Date.now(),
+              title: deliveryDutyPurpose || 'Customs Duty Fee',
+              purpose: deliveryDutyPurpose || 'Standard border clearance inspection and tariffs.',
+              amount: Number(deliveryDutyAmount) || 0,
+              currency: deliveryDutyCurrency,
+              status: 'pending',
+              addedBy: subAdminName,
+              addedAt: new Date().toISOString()
+            }
+          ] : []
         },
         subAdminName
       );
 
-      showToast(`Consignment ${tracking} created and assigned to ${selectedCust.fullName}!`);
+      showToast(`Consignment ${tracking} created with ${deliveryPackageImages.length} package photos!`);
       // Reset form with fresh tracking code
       setDeliveryTrackingNumber(generateNewTrackingCode());
       setDeliveryTitle('Air Freight Consignment & Electronic Equipment');
@@ -376,6 +432,88 @@ export const SubAdminDashboard: React.FC = () => {
     } finally {
       setCreatingDelivery(false);
     }
+  };
+
+  // Action: Add Itemized Fee to Shipment
+  const handleAddFeeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!feeManagingShipment) return;
+    if (!newFeeTitle.trim()) {
+      showToast('Please enter fee title.', 'error');
+      return;
+    }
+    if (!newFeePurpose.trim()) {
+      showToast('Please enter purpose of payment.', 'error');
+      return;
+    }
+    setSavingFee(true);
+    try {
+      await addItemizedFee(
+        feeManagingShipment.id,
+        {
+          title: newFeeTitle.trim(),
+          purpose: newFeePurpose.trim(),
+          amount: Number(newFeeAmount) || 0,
+          currency: newFeeCurrency || 'USD',
+          status: newFeeStatus
+        },
+        subAdminName
+      );
+      showToast(`Fee "${newFeeTitle}" ($${newFeeAmount}) added to ${feeManagingShipment.trackingNumber}!`);
+      setNewFeeTitle('');
+      setNewFeePurpose('');
+      setNewFeeAmount(0);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to add fee.', 'error');
+    } finally {
+      setSavingFee(false);
+    }
+  };
+
+  const handleToggleFeeStatus = async (feeId: string, currentStatus: 'paid' | 'pending') => {
+    if (!feeManagingShipment) return;
+    const nextStatus = currentStatus === 'paid' ? 'pending' : 'paid';
+    try {
+      await updateItemizedFee(feeManagingShipment.id, feeId, { status: nextStatus }, subAdminName);
+      showToast(`Fee marked as ${nextStatus.toUpperCase()}`);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update fee status.', 'error');
+    }
+  };
+
+  const handleDeleteFee = async (feeId: string) => {
+    if (!feeManagingShipment) return;
+    try {
+      await deleteItemizedFee(feeManagingShipment.id, feeId, subAdminName);
+      showToast('Itemized fee removed.');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete fee.', 'error');
+    }
+  };
+
+  // Multiple Package Image Upload handler
+  const handleMultiplePackageImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          setDeliveryPackageImages(prev => [...prev, reader.result as string]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleAddPackagePhotoUrl = () => {
+    if (!packagePhotoUrlInput.trim()) return;
+    setDeliveryPackageImages(prev => [...prev, packagePhotoUrlInput.trim()]);
+    setPackagePhotoUrlInput('');
+  };
+
+  const handleRemovePackageImage = (index: number) => {
+    setDeliveryPackageImages(prev => prev.filter((_, i) => i !== index));
   };
 
   // Action: Add Checkpoint / Movement Update
@@ -1676,7 +1814,117 @@ export const SubAdminDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Submit Button */}
+                  {/* MULTIPLE PRODUCT PACKAGE UPLOAD (User requested: during create delivery must upload product package multiple) */}
+                  <div className="p-5 bg-blue-50/50 rounded-2xl border border-blue-200/80 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center space-x-2">
+                        <Camera className="w-5 h-5 text-blue-600" />
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-wider text-blue-950">
+                            Product Package Photos (Multiple Upload) *
+                          </h3>
+                          <p className="text-[11px] text-blue-700">
+                            Upload multiple photos of the physical packages, cargo boxes, customs seals, or manifests.
+                          </p>
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-0.5 rounded-full bg-blue-200 text-blue-900 text-[10px] font-mono font-bold w-fit">
+                        {deliveryPackageImages.length} Package Photo{deliveryPackageImages.length !== 1 ? 's' : ''} Attached
+                      </span>
+                    </div>
+
+                    {/* Upload Controls */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {/* Local File Multi-Upload */}
+                      <label className="p-4 bg-white border-2 border-dashed border-blue-300 hover:border-blue-500 rounded-xl flex flex-col items-center justify-center text-center cursor-pointer transition-colors group">
+                        <Upload className="w-6 h-6 text-blue-600 group-hover:scale-110 transition-transform mb-1.5" />
+                        <span className="text-xs font-bold text-gray-900">Upload Multiple Package Photos</span>
+                        <span className="text-[10px] text-gray-500 mt-0.5">Select multiple JPG / PNG files from device</span>
+                        <input
+                          type="file"
+                          multiple
+                          accept="image/*"
+                          onChange={handleMultiplePackageImages}
+                          className="hidden"
+                        />
+                      </label>
+
+                      {/* Quick URL or Sample Photos Input */}
+                      <div className="p-4 bg-white border border-gray-200 rounded-xl space-y-2 flex flex-col justify-between">
+                        <div>
+                          <span className="text-xs font-bold text-gray-800">Add Via Image URL / Freight Presets</span>
+                          <div className="flex space-x-2 mt-1.5">
+                            <input
+                              type="text"
+                              value={packagePhotoUrlInput}
+                              onChange={(e) => setPackagePhotoUrlInput(e.target.value)}
+                              placeholder="https://... photo link"
+                              className="flex-1 px-3 py-1.5 bg-slate-50 border border-gray-200 rounded-lg text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleAddPackagePhotoUrl}
+                              className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 cursor-pointer"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5 pt-1 border-t border-gray-100">
+                          <button
+                            type="button"
+                            onClick={() => setDeliveryPackageImages(prev => [
+                              ...prev,
+                              'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=900&q=80',
+                              'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=900&q=80'
+                            ])}
+                            className="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-gray-700 text-[10px] font-bold cursor-pointer"
+                          >
+                            + Presets (Heavy Freight & SUV)
+                          </button>
+                          {deliveryPackageImages.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setDeliveryPackageImages([])}
+                              className="px-2 py-0.5 rounded bg-red-100 hover:bg-red-200 text-red-700 text-[10px] font-bold cursor-pointer"
+                            >
+                              Clear All
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Thumbnails Gallery Preview */}
+                    {deliveryPackageImages.length > 0 && (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2.5 pt-2 border-t border-blue-200/50">
+                        {deliveryPackageImages.map((imgUrl, idx) => (
+                          <div
+                            key={idx}
+                            className="relative group aspect-square rounded-xl overflow-hidden border border-blue-300 bg-black/10 shadow-xs"
+                          >
+                            <img
+                              src={imgUrl}
+                              alt={`Package preview #${idx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute top-1 left-1 bg-black/80 text-white font-mono text-[9px] font-bold px-1.5 py-0.2 rounded">
+                              #{idx + 1}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePackageImage(idx)}
+                              className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shadow-md"
+                              title="Remove Photo"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div className="flex items-center justify-end space-x-3 pt-3">
                     <button
                       type="button"
@@ -1834,6 +2082,16 @@ export const SubAdminDashboard: React.FC = () => {
                             </div>
                           </td>
                           <td className="py-3.5 px-4 text-right space-x-1.5">
+                            {/* Itemized Fees Manager (Sub Admin add fee, more and more) */}
+                            <button
+                              onClick={() => setFeeManagingShipment(s)}
+                              className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-lg text-[11px] font-bold cursor-pointer"
+                              title="Add more fees and write purpose of payment"
+                            >
+                              <DollarSign className="w-3 h-3 inline mr-0.5" />
+                              <span>Fees ({(s.itemizedFees || []).length})</span>
+                            </button>
+
                             {/* Live Tracking Jump */}
                             <button
                               onClick={() => {
@@ -1960,6 +2218,30 @@ export const SubAdminDashboard: React.FC = () => {
                         </span>
                       </div>
                     </div>
+
+                    {/* Consignment Fees Quick Access Bar */}
+                    <div className="mt-3 pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center space-x-2 text-xs">
+                        <CreditCard className="w-4 h-4 text-amber-400" />
+                        <span className="text-gray-300 font-bold">Consignment Charges & Duties:</span>
+                        <span className="px-2 py-0.5 rounded-full bg-slate-800 text-gray-300 font-mono text-[11px] font-bold">
+                          {(selectedTrackingShipment.itemizedFees || []).length} Itemized Fee(s)
+                        </span>
+                        {selectedTrackingShipment.customsDutyAmount > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[11px] font-mono font-bold">
+                            Balance Due: ${selectedTrackingShipment.customsDutyAmount.toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFeeManagingShipment(selectedTrackingShipment)}
+                        className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-sm cursor-pointer transition-all hover:scale-[1.02]"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Manage Fees & Write Purpose</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Add New Checkpoint Form */}
@@ -1986,15 +2268,15 @@ export const SubAdminDashboard: React.FC = () => {
                           }}
                           className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-xs font-bold focus:outline-none"
                         >
-                          <option value="picked_up">Picked Up from Consignor</option>
-                          <option value="package_received">Package Received at Terminal</option>
-                          <option value="processing">Processing & Screening</option>
-                          <option value="sorting_facility">Arrived at Sorting Facility</option>
-                          <option value="departure">Departed Origin Port</option>
+                          <option value="arrival_destination">Package Arrived at Destination</option>
                           <option value="in_transit">In Global Transit</option>
-                          <option value="arrival_destination">Arrived at Destination Hub</option>
-                          <option value="customs_processing">Customs Inspection Processing</option>
-                          <option value="out_for_delivery">Out for Delivery</option>
+                          <option value="sorting_facility">Arrived at Central Sorting Facility</option>
+                          <option value="departure">Departed Origin Port / Hub</option>
+                          <option value="processing">Processing & Security Screening</option>
+                          <option value="picked_up">Picked Up by Courier</option>
+                          <option value="package_received">Package Received at Terminal</option>
+                          <option value="customs_processing">Customs Duty & Tariffs Inspection</option>
+                          <option value="out_for_delivery">Out for Doorstep Delivery</option>
                           <option value="delivered">Delivered & Signed</option>
                           <option value="delayed">Delayed / Transit Exception</option>
                           <option value="failed">Delivery Attempt Failed</option>
@@ -2002,31 +2284,130 @@ export const SubAdminDashboard: React.FC = () => {
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-bold text-gray-700 mb-1">
-                          Current Location (Actual Location) *
+                        <label className="block text-[11px] font-bold text-gray-700 mb-1 flex items-center space-x-1">
+                          <MapPin className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Write Location Name (Actual Location) *</span>
                         </label>
                         <input
                           type="text"
                           value={checkpointLocation}
                           onChange={(e) => setCheckpointLocation(e.target.value)}
-                          placeholder="e.g. London Heathrow Hub Ramp 3"
+                          placeholder="e.g. U.S.A or CANADA or ICELAND"
                           required
-                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-xs font-bold focus:outline-none"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
+                        <span className="text-[10px] text-gray-400 mt-0.5 block">
+                          Displays on customer tracking as current milestone location
+                        </span>
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-bold text-gray-700 mb-1">
-                          Delivery Progress ({checkpointProgress}%)
+                        <label className="block text-[11px] font-bold text-gray-700 mb-1 flex items-center space-x-1">
+                          <Building className="w-3.5 h-3.5 text-gray-500" />
+                          <span>Facility / Terminal Name</span>
                         </label>
+                        <input
+                          type="text"
+                          value={checkpointFacility}
+                          onChange={(e) => setCheckpointFacility(e.target.value)}
+                          placeholder="e.g. U.S.A Final Fulfillment Center"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-xs font-bold focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* SCROLL MOVEMENT AT ANY PERCENTAGE (User requested: scroll the movement at any percentage and write location name) */}
+                    <div className="p-4 bg-white rounded-2xl border border-gray-200 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black uppercase tracking-wider text-gray-800 flex items-center space-x-2">
+                          <Plane className="w-4 h-4 text-blue-600" />
+                          <span>Scroll Delivery Movement Progress:</span>
+                        </label>
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={checkpointProgress}
+                            onChange={(e) => setCheckpointProgress(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                            className="w-16 px-2 py-1 bg-slate-50 border border-gray-300 rounded-lg text-xs font-mono font-black text-center text-blue-700 focus:outline-none"
+                          />
+                          <span className="font-mono font-bold text-xs text-gray-600">%</span>
+                        </div>
+                      </div>
+
+                      {/* Smooth Range Slider */}
+                      <div className="relative">
                         <input
                           type="range"
                           min="0"
                           max="100"
                           value={checkpointProgress}
                           onChange={(e) => setCheckpointProgress(parseInt(e.target.value))}
-                          className="w-full mt-2 accent-blue-600"
+                          className="w-full h-2.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
                         />
+                        <div className="flex justify-between text-[10px] text-gray-400 font-mono mt-1">
+                          <span>0% (Origin)</span>
+                          <span>25%</span>
+                          <span>50% (Mid-Route)</span>
+                          <span>75%</span>
+                          <span>100% (Arrived)</span>
+                        </div>
+                      </div>
+
+                      {/* Quick Percentage Presets */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[10px] font-bold text-gray-400 mr-1">Quick Presets:</span>
+                        {[
+                          { label: '0% Origin', val: 0 },
+                          { label: '25% Departed', val: 25 },
+                          { label: '50% Mid Transit', val: 50 },
+                          { label: '75% Near Port', val: 75 },
+                          { label: '100% Arrived', val: 100 }
+                        ].map((preset) => (
+                          <button
+                            key={preset.val}
+                            type="button"
+                            onClick={() => setCheckpointProgress(preset.val)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                              checkpointProgress === preset.val
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-slate-100 hover:bg-slate-200 text-gray-700'
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* LIVE TELEMETRY PREVIEW (Exact match to Live Cargo Telemetry card) */}
+                      <div className="mt-3 p-4 bg-[#0c1427] text-white rounded-2xl border border-[#1b2640] space-y-3">
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center space-x-1.5 font-black uppercase text-cyan-400 text-[10px] tracking-wider">
+                            <Radio className="w-3.5 h-3.5 animate-pulse" />
+                            <span>Live Telemetry Preview</span>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono text-[10px] font-bold">
+                            {checkpointProgress}% | {checkpointProgress >= 100 ? 'Arrived' : 'In Motion'}
+                          </span>
+                        </div>
+
+                        {/* Progress Bar inside Dispatch Desk */}
+                        <div className="relative flex items-center justify-between py-1">
+                          <span className="text-[10px] font-bold text-gray-300">
+                            🌐 {selectedTrackingShipment.departureLocation}
+                          </span>
+                          <div className="flex-1 mx-3 h-2 bg-[#17223b] rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400 rounded-full transition-all duration-300"
+                              style={{ width: `${Math.max(5, checkpointProgress)}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] font-bold text-white flex items-center space-x-1">
+                            <span>🌐 {checkpointLocation || selectedTrackingShipment.destinationLocation}</span>
+                            <span className="text-cyan-300 font-mono">({checkpointProgress}%)</span>
+                          </span>
+                        </div>
                       </div>
                     </div>
 
@@ -2392,6 +2773,329 @@ export const SubAdminDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ITEMIZED FEE MANAGEMENT MODAL (Sub-Admin add fee, more and more, write purpose of payment) */}
+      {feeManagingShipment && (() => {
+        const fees = feeManagingShipment.itemizedFees || [];
+        const totalCharges = fees.reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+        const amountPaid = fees.filter(f => f.status === 'paid').reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+        const balanceDue = Math.max(0, totalCharges - amountPaid);
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
+            <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-gray-200 overflow-hidden animate-fadeIn">
+              {/* Modal Header */}
+              <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-slate-900 text-white shrink-0">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <DollarSign className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black flex items-center space-x-2">
+                      <span>Itemized Consignment Fee Manager</span>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono">
+                        OFFICIAL BILL
+                      </span>
+                    </h3>
+                    <p className="text-xs text-gray-300">
+                      Consignment: <strong className="text-white font-mono">{feeManagingShipment.trackingNumber}</strong> • Consignee: <strong className="text-white">{feeManagingShipment.customerName}</strong>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFeeManagingShipment(null)}
+                  className="p-2 rounded-xl text-gray-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Scrollable Modal Content */}
+              <div className="p-5 overflow-y-auto space-y-6">
+                {/* 3-Column Summary Cards matching Image */}
+                <div className="grid grid-cols-3 gap-3 p-4 bg-slate-50 rounded-2xl border border-gray-200">
+                  <div className="text-center">
+                    <span className="text-[10px] font-black uppercase text-gray-400 block tracking-wider">
+                      TOTAL CHARGES
+                    </span>
+                    <span className="text-base sm:text-lg font-black text-gray-900 font-mono">
+                      ${totalCharges.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="text-center border-x border-gray-200">
+                    <span className="text-[10px] font-black uppercase text-gray-400 block tracking-wider">
+                      AMOUNT PAID
+                    </span>
+                    <span className="text-base sm:text-lg font-black text-emerald-600 font-mono">
+                      ${amountPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-[10px] font-black uppercase text-gray-400 block tracking-wider">
+                      BALANCE DUE
+                    </span>
+                    <span className="text-base sm:text-lg font-black text-amber-600 font-mono">
+                      ${balanceDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Outstanding Warning Banner */}
+                {balanceDue > 0 ? (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-xs">
+                    <div className="flex items-center space-x-2 text-amber-800 font-bold">
+                      <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Outstanding Balance: ${balanceDue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 font-black text-[10px] tracking-wide uppercase border border-amber-300">
+                      WAITING FOR CUSTOMER TO PAYMENT
+                    </span>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center space-x-2 text-xs text-emerald-800 font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>All fees have been cleared and settled by consignee.</span>
+                  </div>
+                )}
+
+                {/* Existing Fees List */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-gray-700 flex items-center space-x-1.5">
+                      <FileText className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Current Itemized Fees ({fees.length})</span>
+                    </h4>
+                    <span className="text-[11px] text-gray-400">Synchronized with customer tracking bill</span>
+                  </div>
+
+                  {fees.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl">
+                      No fees added yet. Use the form below to add itemized charges with payment purpose.
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {fees.map((fee) => (
+                        <div
+                          key={fee.id}
+                          className="p-3.5 bg-white border border-gray-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs hover:border-gray-300 transition-colors"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center space-x-2">
+                              <span className="font-black text-xs text-gray-900">{fee.title}</span>
+                              {fee.status === 'paid' ? (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-black text-[9px] border border-emerald-300 flex items-center space-x-0.5">
+                                  <Check className="w-2.5 h-2.5" />
+                                  <span>PAID</span>
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-black text-[9px] border border-blue-300">
+                                  PENDING
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-gray-600">
+                              <strong className="text-gray-700 font-semibold">Purpose:</strong> {fee.purpose}
+                            </div>
+                            <div className="text-[10px] text-gray-400 font-mono">
+                              Added by {fee.addedBy || 'Sub-Admin'} • {fee.addedAt ? new Date(fee.addedAt).toLocaleDateString() : 'Recent'}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between sm:justify-end space-x-3 shrink-0">
+                            <span className={`text-sm font-black font-mono ${fee.status === 'paid' ? 'text-emerald-600' : 'text-blue-600'}`}>
+                              ${fee.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+
+                            <div className="flex items-center space-x-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleFeeStatus(fee.id, fee.status)}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
+                                  fee.status === 'paid'
+                                    ? 'bg-amber-100 hover:bg-amber-200 text-amber-800'
+                                    : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800'
+                                }`}
+                              >
+                                {fee.status === 'paid' ? 'Mark Pending' : 'Mark Paid'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteFee(fee.id)}
+                                title="Remove fee"
+                                className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Add Itemized Fee Form ("Sub admin can add fee, more and more and write purpose of payment") */}
+                <form onSubmit={handleAddFeeSubmit} className="bg-slate-50 border border-blue-100 rounded-2xl p-4 sm:p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-blue-900 flex items-center space-x-1.5">
+                      <Plus className="w-4 h-4 text-blue-600" />
+                      <span>Add Itemized Fee & Write Purpose of Payment</span>
+                    </h4>
+                    <span className="text-[10px] font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
+                      Add Unlimited Fees
+                    </span>
+                  </div>
+
+                  {/* Quick Preset Buttons */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                      Quick Title Suggestions:
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { title: 'Shipment Cost Fee', purpose: 'Standard air freight transport tariff' },
+                        { title: 'Customs Duty Fee', purpose: 'Standard border clearance inspection. shipment has been assessed duties and taxes totaling.' },
+                        { title: 'EXTRA GOLD FOUND AT THE SUV ,WORTH HUGE SUM OF DOLLARS', purpose: 'EXTRA GOLD FOUND AT THE SUV ,WORTH HUGE SUM OF DOLLARS' },
+                        { title: 'Diplomatic Courier Fee', purpose: 'Diplomatic security escort and seal protocol' },
+                        { title: 'Airport Demurrage & Storage', purpose: 'Bonded warehouse terminal storage charge' },
+                        { title: 'Dangerous Goods Surcharge', purpose: 'Aviation safety hazardous classification inspection' }
+                      ].map((preset, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setNewFeeTitle(preset.title);
+                            setNewFeePurpose(preset.purpose);
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-white border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 text-gray-700 hover:text-blue-700 text-[10px] font-bold transition-colors cursor-pointer shadow-2xs"
+                        >
+                          {preset.title.length > 25 ? preset.title.substring(0, 25) + '...' : preset.title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Fee Title */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                      Fee Title (Itemized Name) *
+                    </label>
+                    <input
+                      type="text"
+                      value={newFeeTitle}
+                      onChange={(e) => setNewFeeTitle(e.target.value)}
+                      placeholder="e.g. EXTRA GOLD FOUND AT THE SUV ,WORTH HUGE SUM OF DOLLARS"
+                      required
+                      className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  {/* Purpose of Payment ("write purpose of payment") */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                      Purpose of Payment / Reason (Visible to Customer on Official Bill) *
+                    </label>
+                    <textarea
+                      value={newFeePurpose}
+                      onChange={(e) => setNewFeePurpose(e.target.value)}
+                      rows={2}
+                      placeholder="Write exact purpose of payment, e.g. EXTRA GOLD FOUND AT THE SUV ,WORTH HUGE SUM OF DOLLARS or Standard border clearance inspection..."
+                      required
+                      className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* Amount */}
+                    <div className="sm:col-span-1">
+                      <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                        Amount ($) *
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={newFeeAmount || ''}
+                        onChange={(e) => setNewFeeAmount(parseFloat(e.target.value) || 0)}
+                        placeholder="135000"
+                        required
+                        className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-xs font-mono font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    {/* Currency */}
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                        Currency
+                      </label>
+                      <select
+                        value={newFeeCurrency}
+                        onChange={(e) => setNewFeeCurrency(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="USD">USD ($)</option>
+                        <option value="EUR">EUR (€)</option>
+                        <option value="GBP">GBP (£)</option>
+                        <option value="CAD">CAD ($)</option>
+                      </select>
+                    </div>
+
+                    {/* Payment Status */}
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                        Bill Status
+                      </label>
+                      <select
+                        value={newFeeStatus}
+                        onChange={(e) => setNewFeeStatus(e.target.value as 'pending' | 'paid')}
+                        className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="pending">Pending (Customer Must Pay)</option>
+                        <option value="paid">Paid (Already Cleared)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="submit"
+                      disabled={savingFee}
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center space-x-2 cursor-pointer shadow-sm transition-all"
+                    >
+                      {savingFee ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Adding Fee to Consignment...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-4 h-4" />
+                          <span>+ Add Itemized Fee & Update Bill</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 bg-slate-50 border-t border-gray-100 flex items-center justify-between shrink-0">
+                <span className="text-[11px] text-gray-500">
+                  Sub-Admins can add more and more fees at any stage of cargo movement.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFeeManagingShipment(null)}
+                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                >
+                  Close Manager
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* CONFIRM DELETE MODAL */}
       {shipmentToDelete && (

@@ -25,7 +25,8 @@ import {
   AuditLog,
   CustomsPaymentStatus,
   ShipmentStatus,
-  AppNotification
+  AppNotification,
+  ItemizedFee
 } from '../types';
 
 /**
@@ -621,6 +622,318 @@ export async function updateCustomsDuty(
   }
 }
 
+/* ---------------- ITEMIZED FEES (MULTI-FEE SUPPORT) ---------------- */
+
+export async function addItemizedFee(
+  shipmentId: string,
+  fee: Omit<ItemizedFee, 'id' | 'addedAt'>,
+  actorName: string
+): Promise<string> {
+  const path = `shipments/${shipmentId}`;
+  try {
+    const snap = await getDoc(doc(db, 'shipments', shipmentId));
+    if (!snap.exists()) throw new Error('Shipment not found.');
+    const shipment = snap.data() as Shipment;
+
+    const feeId = 'fee_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const newFee: ItemizedFee = {
+      ...fee,
+      id: feeId,
+      addedBy: actorName,
+      addedAt: new Date().toISOString()
+    };
+
+    const currentFees: ItemizedFee[] = Array.isArray(shipment.itemizedFees) ? [...shipment.itemizedFees] : [];
+    
+    // If this is the first time itemized fees are added and there was an existing customsDutyAmount, migrate it seamlessly
+    if (currentFees.length === 0 && shipment.customsDutyAmount > 0) {
+      currentFees.push({
+        id: 'legacy_duty_' + Date.now(),
+        title: 'Customs Duty Fee',
+        purpose: shipment.feePurpose || shipment.customsNotes || 'Standard border clearance inspection. shipment has been assessed duties and taxes totaling.',
+        amount: shipment.customsDutyAmount,
+        currency: shipment.customsDutyCurrency || 'USD',
+        status: shipment.customsPaymentStatus === 'paid' ? 'paid' : 'pending',
+        addedBy: 'Logistics System',
+        addedAt: shipment.createdAt || new Date().toISOString()
+      });
+    }
+
+    currentFees.push(newFee);
+
+    // Compute updated totals
+    const pendingTotal = currentFees
+      .filter(f => f.status === 'pending')
+      .reduce((sum, f) => sum + (f.amount || 0), 0);
+
+    const newPaymentStatus: CustomsPaymentStatus = pendingTotal > 0 ? 'pending' : 'paid';
+
+    await updateDoc(doc(db, 'shipments', shipmentId), cleanFirestoreData({
+      itemizedFees: currentFees,
+      customsDutyAmount: pendingTotal,
+      customsPaymentStatus: newPaymentStatus,
+      updatedAt: new Date().toISOString()
+    }));
+
+    // Generate real-time notification for customer
+    if (shipment.customerId) {
+      await createNotification({
+        recipientId: shipment.customerId,
+        recipientRole: 'customer',
+        type: 'delivery_update',
+        title: 'New Itemized Fee Added',
+        message: `An itemized fee of $${fee.amount.toLocaleString()} for "${fee.title}" has been issued on waybill ${shipment.trackingNumber}. Purpose: ${fee.purpose}.`,
+        linkId: shipment.id,
+        read: false
+      });
+    }
+
+    await addAuditLog(
+      'subadmin_add_fee',
+      actorName,
+      'sub_admin',
+      `Added fee "${fee.title}" ($${fee.amount}) with purpose "${fee.purpose}" on consignment ${shipment.trackingNumber}`,
+      shipmentId
+    );
+
+    return feeId;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function updateItemizedFee(
+  shipmentId: string,
+  feeId: string,
+  updates: Partial<ItemizedFee>,
+  actorName: string
+): Promise<void> {
+  const path = `shipments/${shipmentId}`;
+  try {
+    const snap = await getDoc(doc(db, 'shipments', shipmentId));
+    if (!snap.exists()) throw new Error('Shipment not found.');
+    const shipment = snap.data() as Shipment;
+
+    const currentFees: ItemizedFee[] = Array.isArray(shipment.itemizedFees) ? [...shipment.itemizedFees] : [];
+    const idx = currentFees.findIndex(f => f.id === feeId);
+    if (idx === -1) throw new Error('Fee not found.');
+
+    currentFees[idx] = { ...currentFees[idx], ...updates };
+
+    const pendingTotal = currentFees
+      .filter(f => f.status === 'pending')
+      .reduce((sum, f) => sum + (f.amount || 0), 0);
+
+    const newPaymentStatus: CustomsPaymentStatus = pendingTotal > 0 ? 'pending' : 'paid';
+
+    await updateDoc(doc(db, 'shipments', shipmentId), cleanFirestoreData({
+      itemizedFees: currentFees,
+      customsDutyAmount: pendingTotal,
+      customsPaymentStatus: newPaymentStatus,
+      updatedAt: new Date().toISOString()
+    }));
+
+    await addAuditLog(
+      'subadmin_update_fee',
+      actorName,
+      'sub_admin',
+      `Updated fee "${currentFees[idx].title}" on consignment ${shipment.trackingNumber}`,
+      shipmentId
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteItemizedFee(
+  shipmentId: string,
+  feeId: string,
+  actorName: string
+): Promise<void> {
+  const path = `shipments/${shipmentId}`;
+  try {
+    const snap = await getDoc(doc(db, 'shipments', shipmentId));
+    if (!snap.exists()) throw new Error('Shipment not found.');
+    const shipment = snap.data() as Shipment;
+
+    const currentFees: ItemizedFee[] = (shipment.itemizedFees || []).filter(f => f.id !== feeId);
+
+    const pendingTotal = currentFees
+      .filter(f => f.status === 'pending')
+      .reduce((sum, f) => sum + (f.amount || 0), 0);
+
+    const newPaymentStatus: CustomsPaymentStatus = pendingTotal > 0 ? 'pending' : 'paid';
+
+    await updateDoc(doc(db, 'shipments', shipmentId), cleanFirestoreData({
+      itemizedFees: currentFees,
+      customsDutyAmount: pendingTotal,
+      customsPaymentStatus: newPaymentStatus,
+      updatedAt: new Date().toISOString()
+    }));
+
+    await addAuditLog(
+      'subadmin_delete_fee',
+      actorName,
+      'sub_admin',
+      `Deleted fee ID ${feeId} from consignment ${shipment.trackingNumber}`,
+      shipmentId
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function payItemizedFee(
+  shipmentId: string,
+  feeId: string,
+  paymentMethod = 'Online Portal Checkout',
+  reference?: string
+): Promise<void> {
+  const path = `shipments/${shipmentId}`;
+  try {
+    const snap = await getDoc(doc(db, 'shipments', shipmentId));
+    if (!snap.exists()) throw new Error('Shipment not found.');
+    const shipment = snap.data() as Shipment;
+
+    const ref = reference || 'REF-' + Math.floor(100000 + Math.random() * 900000);
+    const now = new Date().toISOString();
+
+    const currentFees: ItemizedFee[] = Array.isArray(shipment.itemizedFees) ? [...shipment.itemizedFees] : [];
+    const feeItem = currentFees.find(f => f.id === feeId);
+    if (!feeItem) throw new Error('Fee not found.');
+
+    feeItem.status = 'paid';
+    feeItem.paidAt = now;
+    feeItem.paymentReference = ref;
+
+    const pendingTotal = currentFees
+      .filter(f => f.status === 'pending')
+      .reduce((sum, f) => sum + (f.amount || 0), 0);
+
+    const newPaymentStatus: CustomsPaymentStatus = pendingTotal > 0 ? 'pending' : 'paid';
+
+    await updateDoc(doc(db, 'shipments', shipmentId), cleanFirestoreData({
+      itemizedFees: currentFees,
+      customsDutyAmount: pendingTotal,
+      customsPaymentStatus: newPaymentStatus,
+      customsReference: ref,
+      updatedAt: now
+    }));
+
+    // Record formal payment record
+    await recordPayment({
+      shipmentId,
+      trackingNumber: shipment.trackingNumber,
+      customerId: shipment.customerId,
+      customerName: shipment.customerName,
+      amount: feeItem.amount,
+      currency: feeItem.currency,
+      paymentMethod,
+      status: 'confirmed',
+      reference: ref,
+      notes: `Settled fee: ${feeItem.title}. Purpose: ${feeItem.purpose}`
+    });
+
+    // Notify Sub Admin & Customer
+    if (shipment.subAdminId) {
+      await createNotification({
+        recipientId: shipment.subAdminId,
+        recipientRole: 'sub_admin',
+        type: 'delivery_update',
+        title: 'Fee Paid by Customer',
+        message: `Customer ${shipment.customerName} settled fee "${feeItem.title}" ($${feeItem.amount}) on ${shipment.trackingNumber}.`,
+        linkId: shipmentId,
+        read: false
+      });
+    }
+
+    await addAuditLog(
+      'customer_pay_fee',
+      shipment.customerName || 'Customer',
+      'customer',
+      `Customer settled fee "${feeItem.title}" ($${feeItem.amount}) with reference ${ref}`,
+      shipmentId
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function payAllOutstandingFees(
+  shipmentId: string,
+  paymentMethod = 'Full Outstanding Settlement',
+  reference?: string
+): Promise<void> {
+  const path = `shipments/${shipmentId}`;
+  try {
+    const snap = await getDoc(doc(db, 'shipments', shipmentId));
+    if (!snap.exists()) throw new Error('Shipment not found.');
+    const shipment = snap.data() as Shipment;
+
+    const ref = reference || 'FULL-' + Math.floor(100000 + Math.random() * 900000);
+    const now = new Date().toISOString();
+
+    const currentFees: ItemizedFee[] = Array.isArray(shipment.itemizedFees) ? [...shipment.itemizedFees] : [];
+    let settledAmount = 0;
+
+    currentFees.forEach(f => {
+      if (f.status === 'pending') {
+        f.status = 'paid';
+        f.paidAt = now;
+        f.paymentReference = ref;
+        settledAmount += f.amount || 0;
+      }
+    });
+
+    if (currentFees.length === 0 && shipment.customsDutyAmount > 0) {
+      settledAmount = shipment.customsDutyAmount;
+    }
+
+    await updateDoc(doc(db, 'shipments', shipmentId), cleanFirestoreData({
+      itemizedFees: currentFees,
+      customsDutyAmount: 0,
+      customsPaymentStatus: 'paid',
+      customsReference: ref,
+      updatedAt: now
+    }));
+
+    await recordPayment({
+      shipmentId,
+      trackingNumber: shipment.trackingNumber,
+      customerId: shipment.customerId,
+      customerName: shipment.customerName,
+      amount: settledAmount,
+      currency: shipment.customsDutyCurrency || 'USD',
+      paymentMethod,
+      status: 'confirmed',
+      reference: ref,
+      notes: `Settled all outstanding balance of $${settledAmount.toLocaleString()} on ${shipment.trackingNumber}`
+    });
+
+    if (shipment.subAdminId) {
+      await createNotification({
+        recipientId: shipment.subAdminId,
+        recipientRole: 'sub_admin',
+        type: 'delivery_update',
+        title: 'Full Balance Settled',
+        message: `Customer ${shipment.customerName} settled all outstanding balance ($${settledAmount.toLocaleString()}) on ${shipment.trackingNumber}.`,
+        linkId: shipmentId,
+        read: false
+      });
+    }
+
+    await addAuditLog(
+      'customer_pay_all_fees',
+      shipment.customerName || 'Customer',
+      'customer',
+      `Customer settled full balance ($${settledAmount.toLocaleString()}) on consignment ${shipment.trackingNumber}`,
+      shipmentId
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
 export async function recordPayment(payment: Omit<PaymentRecord, 'id' | 'createdAt'>): Promise<string> {
   const path = 'payments';
   try {
@@ -1090,85 +1403,139 @@ export async function seedInitialDemoData(): Promise<void> {
       });
     }
 
-    // 4. Sample shipments with authentic tracking numbers
+    // 4. Sample shipment with exact itemized fees matching live bill telemetry
     const sampleTracking = 'IEC-748920-EXP';
+    const sampleFees: ItemizedFee[] = [
+      {
+        id: 'fee_shipment_cost',
+        title: 'Shipment Cost Fee',
+        purpose: 'CAR',
+        amount: 0,
+        currency: 'USD',
+        status: 'paid',
+        paidAt: new Date(Date.now() - 48 * 3600 * 1000).toISOString(),
+        paymentReference: 'PAID-SYS-001',
+        addedBy: 'Sub Admin Station'
+      },
+      {
+        id: 'fee_customs_duty',
+        title: 'Customs Duty Fee',
+        purpose: 'Standard border clearance inspection. shipment has been assessed duties and taxes totaling.',
+        amount: 20000,
+        currency: 'USD',
+        status: 'paid',
+        paidAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+        paymentReference: 'PAID-CBP-20000',
+        addedBy: 'Sub Admin Station'
+      },
+      {
+        id: 'fee_extra_gold',
+        title: 'EXTRA GOLD FOUND AT THE SUV ,WORTH HUGE SUM OF DOLLARS',
+        purpose: 'EXTRA GOLD FOUND AT THE SUV ,WORTH HUGE SUM OF DOLLARS',
+        amount: 135000,
+        currency: 'USD',
+        status: 'pending',
+        addedBy: 'Sub Admin Station'
+      }
+    ];
+
+    const samplePackageImages = [
+      'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=900&q=80',
+      'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=900&q=80',
+      'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=900&q=80'
+    ];
+
     const shipmentSnap = await getDoc(doc(db, 'shipments', sampleTracking));
+    const now = new Date();
+    const createdDate = new Date(now.getTime() - 5 * 24 * 3600 * 1000).toISOString();
+    const estDelivery = 'Oct 9, 2026';
+
+    const shipmentData: Shipment = {
+      id: sampleTracking,
+      trackingNumber: sampleTracking,
+      customerId: 'customer_demo_1',
+      customerName: 'Elena Rostova (Apex Global Imports)',
+      customerEmail: 'customer@apexlogistics.com',
+      customerPhone: '+1 (415) 890-3344',
+      subAdminId: 'sub_admin_1',
+      subAdminName: 'Sub Admin Station',
+      description: 'SUV Consignment & High-Value Cargo Transport',
+      packageType: 'SUV & Sealed High-Value Container',
+      weightKg: 2450,
+      pieces: 1,
+      dimensions: '480 x 195 x 185 cm',
+      senderName: 'UK International Freight Terminal',
+      senderPhone: '+44 20 7946 0991',
+      senderAddress: 'London Heathrow Gateway Ramp 4',
+      senderCountry: 'United Kingdom',
+      recipientName: 'Valued Consignee',
+      recipientPhone: '+1 (415) 890-3344',
+      recipientAddress: '40 North 400 West Heber City, Utah 84032',
+      recipientCountry: 'United States',
+      pickupAddress: 'Washington ; 1000 H St NW',
+      deliveryAddress: '40 North 400 West Heber City, Utah 84032',
+      departureLocation: 'U.K',
+      destinationLocation: 'U.S.A',
+      currentLocation: 'U.S.A',
+      carrier: 'Intermodal Freight Express / Global Logistics',
+      status: 'arrival_destination',
+      statusNotes: 'Handed over for final doorstep delivery! Delivery Completed (100%)',
+      deliveryProgressPercentage: 100,
+      estimatedDeliveryDate: estDelivery,
+      customsDutyAmount: 135000.00,
+      customsDutyCurrency: 'USD',
+      customsPaymentStatus: 'pending',
+      feePurpose: 'EXTRA GOLD FOUND AT THE SUV ,WORTH HUGE SUM OF DOLLARS',
+      customsReference: 'CBP-GOLD-135000',
+      customsNotes: 'Standard border clearance inspection. shipment has been assessed duties and taxes totaling.',
+      itemizedFees: sampleFees,
+      packageImages: samplePackageImages,
+      photos: samplePackageImages.map((url, i) => ({
+        id: `pkg-${i + 1}`,
+        name: `Package Inspection #${i + 1}`,
+        url,
+        caption: `Verified Cargo Package Photo #${i + 1}`,
+        uploadedAt: createdDate
+      })),
+      createdAt: createdDate,
+      updatedAt: now.toISOString(),
+    };
+
     if (!shipmentSnap.exists()) {
-      const now = new Date();
-      const createdDate = new Date(now.getTime() - 3 * 24 * 3600 * 1000).toISOString();
-      const estDelivery = new Date(now.getTime() + 2 * 24 * 3600 * 1000).toISOString().split('T')[0];
+      await setDoc(doc(db, 'shipments', sampleTracking), cleanFirestoreData(shipmentData));
+    } else {
+      // Ensure existing shipment document has itemizedFees and updated pickup/delivery addresses
+      const current = shipmentSnap.data() as Shipment;
+      if (!current.itemizedFees || current.itemizedFees.length === 0 || !current.pickupAddress) {
+        await updateDoc(doc(db, 'shipments', sampleTracking), cleanFirestoreData({
+          pickupAddress: 'Washington ; 1000 H St NW',
+          deliveryAddress: '40 North 400 West Heber City, Utah 84032',
+          departureLocation: 'U.K',
+          destinationLocation: 'U.S.A',
+          currentLocation: 'U.S.A',
+          deliveryProgressPercentage: 100,
+          status: 'arrival_destination',
+          itemizedFees: sampleFees,
+          packageImages: samplePackageImages,
+          customsDutyAmount: 135000.00,
+          customsPaymentStatus: 'pending'
+        }));
+      }
+    }
 
-      await setDoc(doc(db, 'shipments', sampleTracking), {
-        id: sampleTracking,
-        trackingNumber: sampleTracking,
-        customerId: 'customer_demo_1',
-        customerName: 'Elena Rostova (Apex Global Imports)',
-        customerEmail: 'customer@apexlogistics.com',
-        customerPhone: '+1 (415) 890-3344',
-        subAdminId: 'sub_admin_1',
-        subAdminName: 'Sub Admin Station',
-        description: 'High-Value Aerospace Avionics & Microcontroller Assemblies',
-        packageType: 'Air Cargo Heavy Crate',
-        weightKg: 142.5,
-        pieces: 4,
-        dimensions: '120 x 80 x 95 cm',
-        senderName: 'Munich Precision Aerospace GmbH',
-        senderPhone: '+49 89 2345678',
-        senderAddress: 'Flughafenallee 12, Terminal Cargo North',
-        senderCountry: 'Germany',
-        recipientName: 'Apex Global Imports LLC',
-        recipientPhone: '+1 (415) 890-3344',
-        recipientAddress: '888 Industrial Parkway, Suite 400',
-        recipientCountry: 'United States',
-        departureLocation: 'Munich Airport Cargo (MUC), Germany',
-        destinationLocation: 'San Francisco International (SFO), USA',
-        currentLocation: 'JFK International Airport Cargo Terminal 4, New York',
-        carrier: 'Boeing 747-8F Heavy Freight / Flight IEC-890',
-        status: 'in_transit',
-        statusNotes: 'Aircraft landed at JFK transfer hub. Cleared TSA physical cargo inspection.',
-        estimatedDeliveryDate: estDelivery,
-        customsDutyAmount: 850.00,
-        customsDutyCurrency: 'USD',
-        customsPaymentStatus: 'pending',
-        customsReference: 'USCBP-2026-9921',
-        customsNotes: 'Standard 4.5% tariff applicable on industrial precision avionics.',
-        createdAt: createdDate,
-        updatedAt: now.toISOString(),
-      });
-
-      // Sample events
+    // Sample events matching screenshot timeline
+    const existingEvents = await getTrackingEvents(sampleTracking);
+    if (!existingEvents || existingEvents.length === 0) {
       await addDoc(collection(db, 'tracking_events'), {
         shipmentId: sampleTracking,
         trackingNumber: sampleTracking,
-        status: 'registered',
-        title: 'Air Waybill Issued & Booking Confirmed',
-        description: 'Electronic documentation processed. Manifest transmitted to airline.',
-        location: 'Munich, Germany',
-        timestamp: new Date(now.getTime() - 72 * 3600 * 1000).toISOString(),
-        recordedBy: 'Sub Admin Station',
-        recordedByRole: 'sub_admin'
-      });
-
-      await addDoc(collection(db, 'tracking_events'), {
-        shipmentId: sampleTracking,
-        trackingNumber: sampleTracking,
-        status: 'package_received',
-        title: 'Received at Munich Cargo Logistics Hub',
-        description: 'Pallet weighed, scanned, and banded with tamper-evident security seal #SEAL-9982.',
-        location: 'Munich Airport Cargo (MUC)',
-        timestamp: new Date(now.getTime() - 48 * 3600 * 1000).toISOString(),
-        recordedBy: 'Sub Admin Station',
-        recordedByRole: 'sub_admin'
-      });
-
-      await addDoc(collection(db, 'tracking_events'), {
-        shipmentId: sampleTracking,
-        trackingNumber: sampleTracking,
-        status: 'departure',
-        title: 'Departed Munich on Boeing 747-8F',
-        description: 'Flight IEC-890 airborne over Atlantic international flight corridor.',
-        location: 'Munich Airport (MUC)',
-        timestamp: new Date(now.getTime() - 24 * 3600 * 1000).toISOString(),
+        status: 'arrival_destination',
+        title: 'Package Arrived at Destination',
+        description: 'Standard border clearance inspection. shipment has been assessed duties and taxes totaling.',
+        location: 'USA',
+        facility: 'U.S.A Final Fulfillment Center',
+        deliveryProgressPercentage: 100,
+        timestamp: '2026-10-09T14:34:00Z',
         recordedBy: 'Sub Admin Station',
         recordedByRole: 'sub_admin'
       });
@@ -1177,12 +1544,42 @@ export async function seedInitialDemoData(): Promise<void> {
         shipmentId: sampleTracking,
         trackingNumber: sampleTracking,
         status: 'in_transit',
-        title: 'Transfer Hub Arrival & Transshipment',
-        description: 'Cargo unloaded for customs transshipment connection to West Coast dispatch.',
-        location: 'JFK Airport Terminal 4, New York, USA',
-        timestamp: new Date(now.getTime() - 6 * 3600 * 1000).toISOString(),
-        recordedBy: 'Super Admin HQ',
-        recordedByRole: 'super_admin'
+        title: 'In Transit - CANADA',
+        description: 'Transshipment through Canada sorting and customs transit corridor.',
+        location: 'CANADA',
+        facility: 'Montreal Intermodal Rail Hub',
+        deliveryProgressPercentage: 75,
+        timestamp: '2026-10-09T14:34:00Z',
+        recordedBy: 'Sub Admin Station',
+        recordedByRole: 'sub_admin'
+      });
+
+      await addDoc(collection(db, 'tracking_events'), {
+        shipmentId: sampleTracking,
+        trackingNumber: sampleTracking,
+        status: 'in_transit',
+        title: 'ICELAND',
+        description: 'Atlantic transit refueling and security checkpoint clearance.',
+        location: 'ICELAND',
+        facility: 'Keflavik Freight Airfield',
+        deliveryProgressPercentage: 50,
+        timestamp: '2026-10-08T08:05:00Z',
+        recordedBy: 'Sub Admin Station',
+        recordedByRole: 'sub_admin'
+      });
+
+      await addDoc(collection(db, 'tracking_events'), {
+        shipmentId: sampleTracking,
+        trackingNumber: sampleTracking,
+        status: 'in_transit',
+        title: 'Ireland',
+        description: 'Departed Shannon bonded staging facility en route across North Atlantic.',
+        location: 'Ireland',
+        facility: 'Shannon Gateway Hub',
+        deliveryProgressPercentage: 25,
+        timestamp: '2026-10-04T16:42:00Z',
+        recordedBy: 'Sub Admin Station',
+        recordedByRole: 'sub_admin'
       });
     }
 

@@ -58,6 +58,20 @@ export interface ShipmentPhoto {
   uploadedAt: string;
 }
 
+export interface ItemizedFee {
+  id: string;
+  title: string; // e.g. "Shipment Cost Fee", "Customs Duty Fee", "EXTRA GOLD FOUND AT THE SUV ,WORTH HUGE SUM OF DOLLARS"
+  purpose: string; // Reason / Purpose of payment (e.g. "CAR", "Standard border clearance inspection...")
+  amount: number;
+  currency: string; // e.g. "USD", "$"
+  status: 'paid' | 'pending';
+  paidAt?: string;
+  paymentReference?: string;
+  receiptUrl?: string;
+  addedBy?: string;
+  addedAt?: string;
+}
+
 export interface Shipment {
   id: string;
   trackingNumber: string;
@@ -80,6 +94,8 @@ export interface Shipment {
   recipientPhone?: string;
   recipientAddress: string;
   recipientCountry: string;
+  pickupAddress?: string;
+  deliveryAddress?: string;
   departureLocation: string;
   destinationLocation: string;
   currentLocation?: string;
@@ -97,6 +113,8 @@ export interface Shipment {
   feePurpose?: string;
   customsReference?: string;
   customsNotes?: string;
+  itemizedFees?: ItemizedFee[];
+  packageImages?: string[];
   documents?: ShipmentDocument[];
   photos?: ShipmentPhoto[];
   createdAt: string;
