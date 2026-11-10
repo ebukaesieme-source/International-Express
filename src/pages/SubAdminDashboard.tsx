@@ -637,12 +637,12 @@ export const SubAdminDashboard: React.FC = () => {
     }
   };
 
-  // Customer presence helper (calculates online or hours offline)
+  // Customer presence helper (calculates Active Online or exact hours offline)
   const getCustomerPresence = (cust: UserProfile) => {
     if (cust.isOnline) {
-      if (!cust.lastSeen) return { isOnline: true, text: 'Online now' };
+      if (!cust.lastSeen) return { isOnline: true, text: 'Active Online' };
       const diffMs = Date.now() - new Date(cust.lastSeen).getTime();
-      if (diffMs < 5 * 60 * 1000) return { isOnline: true, text: 'Online now' };
+      if (diffMs < 5 * 60 * 1000) return { isOnline: true, text: 'Active Online' };
     }
     if (!cust.lastSeen) return { isOnline: false, text: 'Offline for 3 hours' };
     const diffMs = Date.now() - new Date(cust.lastSeen).getTime();
@@ -650,9 +650,9 @@ export const SubAdminDashboard: React.FC = () => {
     const hours = Math.floor(minutes / 60);
     const days = Math.floor(hours / 24);
     if (minutes < 2) return { isOnline: false, text: 'Offline just now' };
-    if (minutes < 60) return { isOnline: false, text: `Offline for ${minutes}m` };
-    if (hours < 24) return { isOnline: false, text: `Offline for ${hours}h` };
-    return { isOnline: false, text: `Offline for ${days}d` };
+    if (minutes < 60) return { isOnline: false, text: `Offline for ${minutes} min` };
+    if (hours < 24) return { isOnline: false, text: `Offline for ${hours} ${hours === 1 ? 'hour' : 'hours'}` };
+    return { isOnline: false, text: `Offline for ${days} ${days === 1 ? 'day' : 'days'}` };
   };
 
   // Filtered lists
@@ -1520,10 +1520,41 @@ export const SubAdminDashboard: React.FC = () => {
                                 {conv.customerName.charAt(0)}
                               </div>
                               <div className="min-w-0">
-                                <div className="flex items-center space-x-2">
+                                <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                                   <h4 className="font-black text-gray-900 text-xs truncate">{conv.customerName}</h4>
+
+                                  {/* Active Online / How Many Hours Offline Indicator */}
+                                  {cust ? (() => {
+                                    const presence = getCustomerPresence(cust);
+                                    return (
+                                      <span
+                                        className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full flex items-center space-x-1 shrink-0 border ${
+                                          presence.isOnline
+                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs'
+                                            : 'bg-slate-100 text-slate-700 border-slate-200'
+                                        }`}
+                                      >
+                                        <span
+                                          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                            presence.isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+                                          }`}
+                                        />
+                                        <span>{presence.text}</span>
+                                      </span>
+                                    );
+                                  })() : (
+                                    <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                                      Offline for 3 hours
+                                    </span>
+                                  )}
+
+                                  {/* Sign of Number of Messages Badge */}
+                                  <span className="text-[9px] font-mono font-black px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+                                    💬 Sign: {conv.unreadAdminCount > 0 ? `${conv.unreadAdminCount} new` : 'Active'} msgs
+                                  </span>
+
                                   {conv.unreadAdminCount > 0 && (
-                                    <span className="bg-red-500 text-white text-[9px] font-extrabold px-1.5 py-0.2 rounded-full">
+                                    <span className="bg-red-500 text-white text-[9px] font-extrabold px-1.5 py-0.2 rounded-full animate-pulse shadow-xs">
                                       {conv.unreadAdminCount} new
                                     </span>
                                   )}

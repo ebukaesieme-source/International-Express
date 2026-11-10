@@ -224,9 +224,13 @@ export const CustomerDashboard: React.FC = () => {
               >
                 <MessageSquare className="w-3.5 h-3.5 text-white" />
                 <span>Support Chat</span>
-                {unreadMessagesCount > 0 && (
+                {unreadMessagesCount > 0 ? (
                   <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-black animate-pulse shadow-xs border border-white/40">
                     {unreadMessagesCount > 10 ? '10+' : unreadMessagesCount}
+                  </span>
+                ) : (
+                  <span className="bg-white/20 text-white text-[9px] font-mono font-bold px-1.5 py-0.2 rounded-full border border-white/25">
+                    Sign: 1–10
                   </span>
                 )}
               </button>
@@ -397,9 +401,13 @@ export const CustomerDashboard: React.FC = () => {
                   <MessageSquare className="w-4 h-4 shrink-0" />
                   <span className="truncate">Support Chat</span>
                 </div>
-                {unreadMessagesCount > 0 && (
+                {unreadMessagesCount > 0 ? (
                   <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full font-black animate-pulse shadow-2xs">
                     {unreadMessagesCount > 10 ? '10+' : unreadMessagesCount}
+                  </span>
+                ) : (
+                  <span className="bg-blue-100 text-blue-800 text-[9px] font-mono font-bold px-1.5 py-0.2 rounded-full">
+                    Sign: 1–10
                   </span>
                 )}
               </button>

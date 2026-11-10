@@ -251,7 +251,10 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   };
 
   const handleDelete = async (msg: ChatMessage) => {
-    if (!confirm('Are you sure you want to delete this message in accordance with platform retention policy?')) {
+    const isCustomerMsg = msg.senderRole === 'customer';
+    const isSubAdminMsg = msg.senderRole === 'sub_admin';
+    const roleLabel = isCustomerMsg ? 'Customer' : isSubAdminMsg ? 'Sub Admin' : 'Admin';
+    if (!confirm(`Super Admin Action: Permanently delete this ${roleLabel} message? This will instantly remove it for both customer and sub admin.`)) {
       return;
     }
     try {
@@ -260,7 +263,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
         'message_deleted',
         currentUserProfile.fullName,
         currentUserProfile.role,
-        `Super Admin deleted message ID ${msg.id} sent by ${msg.senderName}.`,
+        `Super Admin deleted ${roleLabel} message ID ${msg.id} sent by ${msg.senderName}: "${(msg.text || '').substring(0, 40)}"`,
         msg.id
       );
     } catch (err) {
@@ -273,21 +276,21 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const isSubAdmin = currentUserProfile.role === 'sub_admin';
   const isCustomer = currentUserProfile.role === 'customer';
 
-  // Customer presence helper (calculates online or hours offline)
+  // Customer presence helper (calculates Active Online or how many hours offline)
   const getCustomerPresenceInfo = () => {
     const isOnline = customerPresenceProfile?.isOnline;
     const lastSeen = customerPresenceProfile?.lastSeen;
 
     if (isOnline) {
-      if (!lastSeen) return { isOnline: true, text: 'Online now' };
+      if (!lastSeen) return { isOnline: true, text: 'Active Online', subtext: 'Online now' };
       const diffMs = Date.now() - new Date(lastSeen).getTime();
       if (diffMs < 5 * 60 * 1000) {
-        return { isOnline: true, text: 'Online now' };
+        return { isOnline: true, text: 'Active Online', subtext: 'Online now' };
       }
     }
 
     if (!lastSeen) {
-      return { isOnline: false, text: 'Offline for 3 hours' };
+      return { isOnline: false, text: 'Offline for 3 hours', subtext: 'Last online: 3 hours ago' };
     }
 
     const diffMs = Date.now() - new Date(lastSeen).getTime();
@@ -296,15 +299,15 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
     const days = Math.floor(hours / 24);
 
     if (minutes < 2) {
-      return { isOnline: false, text: 'Offline just now' };
+      return { isOnline: false, text: 'Offline just now', subtext: 'Last seen just now' };
     }
     if (minutes < 60) {
-      return { isOnline: false, text: `Offline for ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}` };
+      return { isOnline: false, text: `Offline for ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`, subtext: `Last active ${minutes}m ago` };
     }
     if (hours < 24) {
-      return { isOnline: false, text: `Offline for ${hours} ${hours === 1 ? 'hour' : 'hours'}` };
+      return { isOnline: false, text: `Offline for ${hours} ${hours === 1 ? 'hour' : 'hours'}`, subtext: `Last active ${hours}h ago` };
     }
-    return { isOnline: false, text: `Offline for ${days} ${days === 1 ? 'day' : 'days'}` };
+    return { isOnline: false, text: `Offline for ${days} ${days === 1 ? 'day' : 'days'}`, subtext: `Last active ${days}d ago` };
   };
 
   // User requested: "super admin can edit sub admin message to customer, but sub admin will still see his old message, only the customer will see the new message"
@@ -323,7 +326,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
   return (
     <div className="flex flex-col h-[620px] sm:h-[calc(100vh-140px)] min-h-[560px] max-h-[88vh] bg-slate-50 border border-gray-200 rounded-2xl overflow-hidden shadow-lg w-full">
-      {/* Chat Header - Compact Sleek Header with Return icon and X close button */}
+      {/* Chat Header - Compact Sleek Header matching reference design */}
       <div className="bg-[#0b132b] text-white px-3 sm:px-5 py-2.5 sm:py-3 flex items-center justify-between border-b border-[#1c2541] gap-2">
         <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
           <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-xs sm:text-sm shadow-inner text-white shrink-0">
@@ -339,14 +342,14 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               </span>
 
               {/* Customer Online / Offline Status Badge matching image_23e32618.png */}
-              {!isCustomer && (() => {
+              {!isCustomer ? (() => {
                 const presence = getCustomerPresenceInfo();
                 return (
                   <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center space-x-1.5 shrink-0 border transition-all ${
+                    className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full flex items-center space-x-1.5 shrink-0 border transition-all ${
                       presence.isOnline
                         ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-xs'
-                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                        : 'bg-slate-800 text-slate-200 border-slate-700'
                     }`}
                   >
                     <span
@@ -359,7 +362,21 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                     <span>{presence.text}</span>
                   </span>
                 );
-              })()}
+              })() : (
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full flex items-center space-x-1 shrink-0 border bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Active Online • Support Desk</span>
+                </span>
+              )}
+
+              {/* Signs of Number of Messages Badge */}
+              <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-400/30 flex items-center space-x-1 shrink-0">
+                <span className="text-gray-300">Signs of Messages:</span>
+                <strong className="text-white">
+                  {messages.length > 0 ? `Sign #1 – #${messages.length}` : '0 msgs'}
+                </strong>
+                <span className="text-blue-200 text-[9px]">({messages.length})</span>
+              </span>
             </div>
             <p className="text-[11px] sm:text-xs text-gray-400 truncate">
               {isCustomer ? (
@@ -491,16 +508,16 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               >
                 {/* Sender Identity & Role Badge + Message Number Sign (1 to 10 etc.) */}
                 <div className={`flex items-center space-x-1.5 text-[11px] px-1 ${isMe ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                  {/* Sequential Message Number Badge (e.g. #1, #2, ... #10) */}
+                  {/* Sequential Message Number Sign (1 to 10 etc.) */}
                   <span
-                    className={`px-1.5 py-0.2 rounded-md font-mono font-black text-[9px] border shadow-2xs ${
+                    className={`px-2 py-0.5 rounded-md font-mono font-black text-[9px] border shadow-2xs flex items-center space-x-0.5 ${
                       isMe
                         ? 'bg-blue-100 text-blue-800 border-blue-200'
                         : 'bg-slate-200 text-slate-700 border-slate-300'
                     }`}
-                    title={`Message #${msgIndex + 1}`}
+                    title={`Message Sign #${msgIndex + 1}`}
                   >
-                    #{msgIndex + 1}
+                    <span>Sign #{msgIndex + 1}</span>
                   </span>
 
                   <span className={`font-bold ${isMe ? 'text-blue-600' : 'text-gray-700'}`}>
@@ -548,7 +565,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                       : 'bg-white border border-gray-200 text-gray-800 rounded-tl-none self-start shadow-xs'
                   }`}
                 >
-                  {/* Super Admin Control Actions: Edit for Customer & Delete (User requested: super admin can delete a message sent by customer to sub admin) */}
+                  {/* Super Admin Control Actions: Edit for Customer & Delete Both Customer and Sub Admin Messages */}
                   {isSuperAdmin && (
                     <div className="flex items-center space-x-1.5 mt-1 mb-2 pt-1 pb-1 border-b border-black/10 text-[10px] flex-wrap gap-y-1">
                       {/* Edit button: Super Admin can edit Sub-Admin messages */}
@@ -564,15 +581,39 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                         <span>Edit for Customer</span>
                       </button>
 
-                      {/* Prominent Delete button: Super admin can delete customer messages sent to sub admin */}
-                      <button
-                        onClick={() => handleDelete(msg)}
-                        className="px-2.5 py-0.5 rounded bg-red-600 hover:bg-red-700 text-white font-bold flex items-center space-x-1 transition-colors cursor-pointer shadow-xs"
-                        title={isCustomerMsg ? "Permanently delete message sent by customer to Sub-Admin" : "Permanently delete message"}
-                      >
-                        <Trash2 className="w-3 h-3 text-white" />
-                        <span>{isCustomerMsg ? 'Delete Customer Message' : 'Delete Message'}</span>
-                      </button>
+                      {/* Super Admin power to delete both Customer and Sub Admin messages */}
+                      {isCustomerMsg && (
+                        <button
+                          onClick={() => handleDelete(msg)}
+                          className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs"
+                          title="Super Admin Power: Permanently delete message sent by customer to Sub-Admin"
+                        >
+                          <Trash2 className="w-3 h-3 text-white" />
+                          <span>Delete Customer Message</span>
+                        </button>
+                      )}
+
+                      {isSubAdminMsg && (
+                        <button
+                          onClick={() => handleDelete(msg)}
+                          className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs"
+                          title="Super Admin Power: Permanently delete message sent by Sub-Admin to customer"
+                        >
+                          <Trash2 className="w-3 h-3 text-white" />
+                          <span>Delete Sub Admin Message</span>
+                        </button>
+                      )}
+
+                      {isSuperAdminMsg && (
+                        <button
+                          onClick={() => handleDelete(msg)}
+                          className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs"
+                          title="Super Admin: Permanently delete this admin message"
+                        >
+                          <Trash2 className="w-3 h-3 text-white" />
+                          <span>Delete Admin Message</span>
+                        </button>
+                      )}
                     </div>
                   )}
 
