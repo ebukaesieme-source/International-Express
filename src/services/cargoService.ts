@@ -1118,6 +1118,7 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
     if (msg.moderationStatus === 'approved') {
       const msgSummary = msg.text || (msg.attachmentType ? `[${msg.attachmentType.toUpperCase()}]` : 'Sent attachment');
       const isCustomer = msg.senderRole === 'customer';
+      const isSuperAdminDirect = msg.senderRole === 'super_admin' && (msg.hiddenFromSubAdmin === true || msg.isDirectToCustomer === true || msg.sharedWithSubAdmin === false);
 
       const convRef = doc(db, 'conversations', msg.conversationId);
       const convSnap = await getDoc(convRef);
@@ -1129,14 +1130,22 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
         curUnreadAdmin = cData.unreadAdminCount || 0;
       }
 
-      await updateDoc(convRef, {
+      // If Super Admin sends direct to customer, Sub-Admin will not see it:
+      // - Do NOT update subAdminLastMessage (sub admin won't see preview)
+      // - Do NOT increment unreadAdminCount (sub admin won't see unread badge)
+      const updateData: Record<string, any> = {
         lastMessage: msgSummary,
-        subAdminLastMessage: msgSummary,
         lastMessageTime: now,
         unreadCustomerCount: isCustomer ? curUnreadCust : (curUnreadCust + 1),
-        unreadAdminCount: isCustomer ? (curUnreadAdmin + 1) : curUnreadAdmin,
         updatedAt: now
-      }).catch(err => console.warn('Conversation count update notice:', err));
+      };
+
+      if (!isSuperAdminDirect) {
+        updateData.subAdminLastMessage = msgSummary;
+        updateData.unreadAdminCount = isCustomer ? (curUnreadAdmin + 1) : curUnreadAdmin;
+      }
+
+      await updateDoc(convRef, updateData).catch(err => console.warn('Conversation count update notice:', err));
     }
 
     return docRef.id;
@@ -1179,11 +1188,19 @@ export function subscribeToMessages(
       msgs = msgs.filter(m => !m.isDeleted);
 
       // If user is sub_admin, only show messages if:
-      // - Sent by sub_admin or super_admin
-      // - OR customer message where sharedWithSubAdmin is explicitly true (not held by Super Admin)
+      // - Sent by sub_admin
+      // - OR customer message where sharedWithSubAdmin is explicitly true
+      // - Super Admin direct messages to customer are HIDDEN (sub admin will NOT see them!)
       if (userRole === 'sub_admin') {
         msgs = msgs.filter(m => {
-          if (m.senderRole === 'sub_admin' || m.senderRole === 'super_admin') return true;
+          if (m.senderRole === 'super_admin') {
+            // Super Admin direct message to customer: Sub Admin will NOT see it!
+            if (m.hiddenFromSubAdmin === true || m.isDirectToCustomer === true || m.sharedWithSubAdmin === false) {
+              return false;
+            }
+            return m.sharedWithSubAdmin === true;
+          }
+          if (m.senderRole === 'sub_admin') return true;
           return m.sharedWithSubAdmin === true && m.moderationStatus !== 'rejected';
         });
       }

@@ -181,6 +181,8 @@ export interface ChatMessage {
   text: string;
   customerDisplayText?: string;
   sharedWithSubAdmin?: boolean;
+  hiddenFromSubAdmin?: boolean;
+  isDirectToCustomer?: boolean;
   attachmentUrl?: string;
   attachmentType?: 'image' | 'video' | 'document';
   attachmentName?: string;

@@ -54,6 +54,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const [sending, setSending] = useState(false);
   const [customerMessagesAutoOn, setCustomerMessagesAutoOn] = useState(true);
   const [customerPresenceProfile, setCustomerPresenceProfile] = useState<UserProfile | null>(null);
+  const [superAdminDirectToCustomer, setSuperAdminDirectToCustomer] = useState(true);
   const [attachmentPreview, setAttachmentPreview] = useState<{
     url: string;
     type: 'image' | 'video' | 'document';
@@ -170,9 +171,13 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
     setSending(true);
 
     const isCustomer = currentUserProfile.role === 'customer';
-    // If sender is customer and auto-on is false, message is held from sub admin
-    const sharedWithSubAdmin = !isCustomer || customerMessagesAutoOn;
-    const moderationStatus = sharedWithSubAdmin ? 'approved' : 'pending_moderation';
+    const isSuperAdmin = currentUserProfile.role === 'super_admin';
+
+    // If Super Admin is sending: direct message to customer means Sub Admin will NOT see it
+    const isDirectToCustomer = isSuperAdmin && superAdminDirectToCustomer;
+    const hiddenFromSubAdmin = isDirectToCustomer;
+    const sharedWithSubAdmin = isCustomer ? customerMessagesAutoOn : !isDirectToCustomer;
+    const moderationStatus = 'approved';
 
     try {
       const recipientId = isCustomer
@@ -181,16 +186,21 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
       const recipientRole = isCustomer ? 'sub_admin' : 'customer';
 
+      // User requirement 2: "any message sent by sub admin or super admin will be seen as company support"
+      const messageSenderName = isCustomer ? (currentUserProfile.fullName || 'Customer') : 'Company Support';
+
       const messagePayload: Parameters<typeof sendMessage>[0] = {
         conversationId: conversation.id,
         senderId: currentUserProfile.uid,
-        senderName: currentUserProfile.fullName,
+        senderName: messageSenderName,
         senderEmail: currentUserProfile.email || '',
         senderRole: currentUserProfile.role,
         recipientId,
         recipientRole,
         text: inputText.trim(),
         sharedWithSubAdmin,
+        hiddenFromSubAdmin,
+        isDirectToCustomer,
         moderationStatus,
         isEdited: false,
         isDeleted: false
@@ -203,6 +213,15 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
       }
 
       await sendMessage(messagePayload);
+
+      if (isDirectToCustomer) {
+        await addAuditLog(
+          'super_admin_direct_message',
+          currentUserProfile.fullName,
+          currentUserProfile.role,
+          `Super Admin sent direct message to customer ${conversation.customerName} (Hidden from Sub-Admin): "${inputText.trim().substring(0, 50)}"`
+        );
+      }
 
       setInputText('');
       setAttachmentPreview(null);
@@ -496,10 +515,16 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
             const displayText = getMessageDisplayText(msg);
 
-            // When viewed by a customer, ALL messages from super_admin or sub_admin are presented as "Company Support"
+            // User requirement: "any message sent by sub admin or super admin will be seen as company support"
             const displayedSenderName = isCustomer
               ? (isCustomerMsg ? (currentUserProfile.fullName || 'You') : 'Company Support')
-              : (msg.senderRole === 'customer' ? msg.senderName : (isSuperAdmin ? `${msg.senderName} (${isSuperAdminMsg ? 'Super Admin' : 'Sub Admin'})` : (isMe ? 'You' : msg.senderName)));
+              : isSubAdmin
+              ? (isSubAdminMsg ? 'Company Support (You)' : msg.senderName)
+              : (msg.senderRole === 'customer'
+                  ? msg.senderName
+                  : isSuperAdminMsg
+                  ? 'Company Support (Super Admin)'
+                  : `Company Support (Sub Admin: ${msg.senderName})`);
 
             return (
               <div
@@ -525,6 +550,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                   </span>
                   {isCustomer ? (
                     !isCustomerMsg ? (
+                      /* Any message sent by sub admin or super admin is seen as Company Support by customer */
                       <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 text-[9px] font-black uppercase border border-blue-200 flex items-center space-x-1">
                         <Shield className="w-2.5 h-2.5 text-blue-600" />
                         <span>Company Support</span>
@@ -534,16 +560,36 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                         Consignee
                       </span>
                     )
+                  ) : isSubAdmin ? (
+                    isSubAdminMsg ? (
+                      <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 text-[9px] font-black uppercase border border-blue-200 flex items-center space-x-1">
+                        <Shield className="w-2.5 h-2.5 text-blue-600" />
+                        <span>Company Support</span>
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase border border-emerald-200">
+                        Customer
+                      </span>
+                    )
                   ) : (
                     <>
                       {isSuperAdminMsg && (
-                        <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[9px] font-black uppercase border border-amber-300">
-                          Super Admin
-                        </span>
+                        <div className="flex items-center space-x-1">
+                          <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[9px] font-black uppercase border border-amber-300">
+                            Super Admin
+                          </span>
+                          {(msg.isDirectToCustomer || msg.hiddenFromSubAdmin) && (
+                            <span className="px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 text-[9px] font-bold border border-purple-200 flex items-center space-x-1">
+                              <Lock className="w-2.5 h-2.5 text-purple-600" />
+                              <span>Direct to Customer (Sub Admin Hidden)</span>
+                            </span>
+                          )}
+                        </div>
                       )}
                       {isSubAdminMsg && (
-                        <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 text-[9px] font-black uppercase border border-blue-200">
-                          Sub Admin
+                        <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 text-[9px] font-black uppercase border border-blue-200 flex items-center space-x-1">
+                          <Shield className="w-2.5 h-2.5 text-blue-600" />
+                          <span>Company Support (Sub Admin)</span>
                         </span>
                       )}
                       {isCustomerMsg && (
@@ -779,6 +825,39 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
       {/* Input Area matching image_af72ee61.png */}
       <div className="p-3 bg-white border-t border-gray-200 space-y-2">
+        {/* Super Admin Direct Message Option (User: super admin can also send direct message to the customer, sub admin will not see it) */}
+        {isSuperAdmin && (
+          <div className="px-3 py-2 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200/80 rounded-xl flex items-center justify-between text-xs text-purple-900 gap-2 flex-wrap shadow-2xs">
+            <label className="flex items-center space-x-2 cursor-pointer font-bold select-none text-[11px]">
+              <input
+                type="checkbox"
+                checked={superAdminDirectToCustomer}
+                onChange={(e) => setSuperAdminDirectToCustomer(e.target.checked)}
+                className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 cursor-pointer accent-purple-600"
+              />
+              <span className="flex items-center space-x-1.5 text-purple-950">
+                <Lock className="w-3.5 h-3.5 text-purple-700" />
+                <span>Send Direct Message to Customer (Sub Admin will not see it)</span>
+              </span>
+            </label>
+            <span className="text-[10px] text-purple-800 bg-purple-100/80 px-2 py-0.5 rounded-full font-extrabold flex items-center space-x-1 border border-purple-200">
+              <Shield className="w-2.5 h-2.5 text-purple-600" />
+              <span>Customer sees: <strong>Company Support</strong></span>
+            </span>
+          </div>
+        )}
+
+        {/* Sub Admin Company Support Identity Notice */}
+        {isSubAdmin && (
+          <div className="px-3 py-1 bg-blue-50/80 border border-blue-100 rounded-lg flex items-center justify-between text-[11px] text-blue-900">
+            <span className="flex items-center space-x-1.5">
+              <Shield className="w-3 h-3 text-blue-600" />
+              <span>Official Channel Identity: <strong>Company Support</strong></span>
+            </span>
+            <span className="text-[10px] text-blue-600 font-medium">Customer sees all messages as Company Support</span>
+          </div>
+        )}
+
         {/* Hidden File Input */}
         <input
           type="file"
@@ -799,7 +878,13 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               handleSendMessage();
             }
           }}
-          placeholder="Type reply to customer (Shift+Enter for newline & gaps, Enter to send)..."
+          placeholder={
+            isSuperAdmin
+              ? (superAdminDirectToCustomer ? "Type direct message to customer (Hidden from Sub Admin, seen as Company Support)..." : "Type message to customer (Visible to all)...")
+              : isCustomer
+              ? "Type message to Company Support..."
+              : "Type reply to customer (Shift+Enter for newline, Enter to send)..."
+          }
           className="w-full bg-slate-50 border border-gray-200 focus:border-blue-500 focus:bg-white rounded-xl p-3 text-xs text-gray-800 placeholder-gray-400 outline-none resize-none transition-all"
         />
 
