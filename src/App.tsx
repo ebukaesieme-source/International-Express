@@ -19,6 +19,13 @@ const AppContent: React.FC = () => {
   const { userProfile, loading: authLoading, isSuperAdmin, isSubAdmin, isCustomer } = useAuth();
   const [activeTab, setActiveTab] = useState<string>(() => {
     try {
+      const lastActivityStr = localStorage.getItem('iec_last_activity');
+      if (lastActivityStr) {
+        const lastTime = parseInt(lastActivityStr, 10);
+        if (Number.isFinite(lastTime) && Date.now() - lastTime >= 30 * 60 * 1000) {
+          return 'home';
+        }
+      }
       const cachedRole = sessionStorage.getItem('iec_demo_role');
       if (cachedRole === 'super_admin') return 'super_admin';
       if (cachedRole === 'sub_admin') return 'sub_admin';
@@ -44,6 +51,7 @@ const AppContent: React.FC = () => {
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [trackModalOpen, setTrackModalOpen] = useState(false);
   const [trackSearchCode, setTrackSearchCode] = useState('IEC-748920-EXP');
+  const wasLoggedInRef = React.useRef(false);
 
   const openAuth = (mode: 'login' | 'register' = 'login') => {
     setAuthModalMode(mode);
@@ -61,6 +69,21 @@ const AppContent: React.FC = () => {
   };
 
   const renderContent = () => {
+    if (
+      !userProfile &&
+      wasLoggedInRef.current &&
+      (activeTab === 'super_admin' || activeTab === 'sub_admin' || activeTab === 'customer')
+    ) {
+      return (
+        <PublicHome
+          setActiveTab={setActiveTab}
+          openAuthModal={openAuth}
+          openTrackModal={() => handleOpenTrack()}
+          onTrackCode={handleNavigateTrack}
+        />
+      );
+    }
+
     // Protected Routes
     if (activeTab === 'super_admin') {
       if (!isSuperAdmin) {
@@ -168,6 +191,7 @@ const AppContent: React.FC = () => {
   // Route directly to respective user dashboard on login or session load
   React.useEffect(() => {
     if (userProfile?.role) {
+      wasLoggedInRef.current = true;
       if (userProfile.role === 'super_admin' && activeTab !== 'super_admin') {
         handleSetActiveTab('super_admin');
       } else if (userProfile.role === 'sub_admin' && activeTab !== 'sub_admin') {
@@ -176,6 +200,11 @@ const AppContent: React.FC = () => {
         handleSetActiveTab('customer');
       }
     } else {
+      if (wasLoggedInRef.current) {
+        wasLoggedInRef.current = false;
+        setAuthModalOpen(false);
+        setTrackModalOpen(false);
+      }
       // If user logs out, return to public homepage
       setActiveTab((prev) => {
         if (prev === 'super_admin' || prev === 'sub_admin' || prev === 'customer') {

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -58,10 +58,52 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const ACTIVITY_STORAGE_KEY = 'iec_last_activity';
 
-const markSessionActive = () => {
+const safeGetLocal = (key: string): string | null => {
   try {
-    localStorage.setItem(ACTIVITY_STORAGE_KEY, Date.now().toString());
-  } catch (e) {}
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const safeSetLocal = (key: string, value: string): void => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore storage errors in restricted environments
+  }
+};
+
+const safeRemoveLocal = (key: string): void => {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+};
+
+const safeGetSession = (key: string): string | null => {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const safeSetSession = (key: string, value: string): void => {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // ignore
+  }
+};
+
+const safeRemoveSession = (key: string): void => {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -69,60 +111,80 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const isLoggingOutRef = useRef(false);
+  const lastActivityMemoryRef = useRef<number>(Date.now());
+  const userProfileRef = useRef<UserProfile | null>(null);
+  const currentUserRef = useRef<FirebaseUser | null>(null);
+
+  useEffect(() => {
+    userProfileRef.current = userProfile;
+  }, [userProfile]);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
+  const markSessionActive = useCallback((timestamp = Date.now()) => {
+    lastActivityMemoryRef.current = timestamp;
+    safeSetLocal(ACTIVITY_STORAGE_KEY, timestamp.toString());
+  }, []);
 
   // Initial seed and auth sync
   useEffect(() => {
     seedInitialDemoData().catch(console.error);
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      // Check if previous session expired due to 30-minute inactivity
-      const lastActivityStr = localStorage.getItem('iec_last_activity');
-      if (lastActivityStr) {
-        const lastTime = parseInt(lastActivityStr, 10);
-        if (Date.now() - lastTime >= 30 * 60 * 1000) {
-          localStorage.removeItem('iec_last_activity');
-          sessionStorage.removeItem('iec_demo_uid');
-          sessionStorage.removeItem('iec_demo_role');
-          sessionStorage.removeItem('iec_active_tab');
-          try {
-            await signOut(auth);
-          } catch (e) {}
-          setCurrentUser(null);
-          setUserProfile(null);
-          setLoading(false);
-          return;
-        }
-      }
-
-      setCurrentUser(user);
-      if (user) {
-        await syncUserProfile(user);
-      } else {
-        // Check if there was a local session override for demo accounts
-        const cachedRole = sessionStorage.getItem('iec_demo_role');
-        const cachedUid = sessionStorage.getItem('iec_demo_uid');
-        if (cachedUid && cachedRole) {
-          let profile = await getUserProfile(cachedUid);
-          if (profile) {
-            if (profile.assignedSubAdminName && (profile.assignedSubAdminName.includes('Marcus Vance') || profile.assignedSubAdminName.includes('Regional Dispatch Lead'))) {
-              profile = { ...profile, assignedSubAdminName: 'Company Support' };
-            }
-            if (profile.fullName && (profile.fullName.includes('Marcus Vance') || profile.fullName.includes('Regional Dispatch Lead'))) {
-              profile = { ...profile, fullName: 'London Station Dispatch' };
-            }
-            localStorage.setItem('iec_last_activity', Date.now().toString());
-            setUserProfile(profile);
-            setLoading(false);
+      try {
+        // Check if previous session expired due to 30-minute inactivity
+        const lastActivityStr = safeGetLocal(ACTIVITY_STORAGE_KEY);
+        if (lastActivityStr) {
+          const lastTime = parseInt(lastActivityStr, 10);
+          if (Number.isFinite(lastTime) && Date.now() - lastTime >= INACTIVITY_TIMEOUT_MS) {
+            lastActivityMemoryRef.current = 0;
+            safeRemoveLocal(ACTIVITY_STORAGE_KEY);
+            safeRemoveSession('iec_demo_uid');
+            safeRemoveSession('iec_demo_role');
+            safeRemoveSession('iec_active_tab');
+            try {
+              await signOut(auth);
+            } catch (e) {}
+            setCurrentUser(null);
+            setUserProfile(null);
             return;
           }
         }
-        setUserProfile(null);
+
+        setCurrentUser(user);
+        if (user) {
+          await syncUserProfile(user);
+        } else {
+          // Check if there was a local session override for demo accounts
+          const cachedRole = safeGetSession('iec_demo_role');
+          const cachedUid = safeGetSession('iec_demo_uid');
+          if (cachedUid && cachedRole) {
+            let profile = await getUserProfile(cachedUid);
+            if (profile) {
+              if (profile.assignedSubAdminName && (profile.assignedSubAdminName.includes('Marcus Vance') || profile.assignedSubAdminName.includes('Regional Dispatch Lead'))) {
+                profile = { ...profile, assignedSubAdminName: 'Company Support' };
+              }
+              if (profile.fullName && (profile.fullName.includes('Marcus Vance') || profile.fullName.includes('Regional Dispatch Lead'))) {
+                profile = { ...profile, fullName: 'London Station Dispatch' };
+              }
+              markSessionActive();
+              setUserProfile(profile);
+              return;
+            }
+          }
+          setUserProfile(null);
+        }
+      } catch (err) {
+        console.error('Auth state initialization error:', err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [markSessionActive]);
 
   const syncUserProfile = async (user: FirebaseUser) => {
     try {
@@ -147,9 +209,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (existingByEmail.uid !== user.uid) {
           await deleteUser(existingByEmail.uid);
         }
-        localStorage.setItem('iec_last_activity', Date.now().toString());
-        sessionStorage.setItem('iec_demo_uid', user.uid);
-        sessionStorage.setItem('iec_demo_role', 'sub_admin');
+        markSessionActive();
+        safeSetSession('iec_demo_uid', user.uid);
+        safeSetSession('iec_demo_role', 'sub_admin');
         setUserProfile(profile);
         return;
       }
@@ -190,9 +252,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      localStorage.setItem('iec_last_activity', Date.now().toString());
-      sessionStorage.setItem('iec_demo_uid', profile.uid);
-      sessionStorage.setItem('iec_demo_role', profile.role);
+      markSessionActive();
+      safeSetSession('iec_demo_uid', profile.uid);
+      safeSetSession('iec_demo_role', profile.role);
       setUserProfile(profile);
     } catch (err) {
       console.error('Failed to sync user profile:', err);
@@ -239,8 +301,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await createOrUpdateUserProfile(superProfile);
         }
         markSessionActive();
-        sessionStorage.setItem('iec_demo_uid', superProfile.uid);
-        sessionStorage.setItem('iec_demo_role', 'super_admin');
+        safeSetSession('iec_demo_uid', superProfile.uid);
+        safeSetSession('iec_demo_role', 'super_admin');
         setUserProfile(superProfile);
         setLoading(false);
         return;
@@ -265,8 +327,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
           markSessionActive();
-          sessionStorage.setItem('iec_demo_uid', match.uid);
-          sessionStorage.setItem('iec_demo_role', match.role);
+          safeSetSession('iec_demo_uid', match.uid);
+          safeSetSession('iec_demo_role', match.role);
           setUserProfile(match);
           setLoading(false);
           return;
@@ -282,8 +344,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await syncUserProfile(res.user);
       const profile = await getUserProfile(res.user.uid);
       const resolvedRole = profile?.role || 'customer';
-      sessionStorage.setItem('iec_demo_uid', res.user.uid);
-      sessionStorage.setItem('iec_demo_role', resolvedRole);
+      safeSetSession('iec_demo_uid', res.user.uid);
+      safeSetSession('iec_demo_role', resolvedRole);
       setLoading(false);
       return;
     } catch (err: any) {
@@ -308,8 +370,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await createOrUpdateUserProfile(demoSub);
         }
         markSessionActive();
-        sessionStorage.setItem('iec_demo_uid', 'sub_admin_1');
-        sessionStorage.setItem('iec_demo_role', 'sub_admin');
+        safeSetSession('iec_demo_uid', 'sub_admin_1');
+        safeSetSession('iec_demo_role', 'sub_admin');
         setUserProfile(demoSub);
         setLoading(false);
         return;
@@ -338,8 +400,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await createOrUpdateUserProfile(demoCust);
         }
         markSessionActive();
-        sessionStorage.setItem('iec_demo_uid', 'customer_demo_1');
-        sessionStorage.setItem('iec_demo_role', 'customer');
+        safeSetSession('iec_demo_uid', 'customer_demo_1');
+        safeSetSession('iec_demo_role', 'customer');
         setUserProfile(demoCust);
         setLoading(false);
         return;
@@ -353,6 +415,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const registerCustomer = async (data: RegisterData) => {
     setLoading(true);
+    markSessionActive();
     const cleanEmail = data.email.trim().toLowerCase();
     const cleanPassword = data.password.trim();
 
@@ -417,8 +480,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await createOrUpdateUserProfile(profile);
       markSessionActive();
       setUserProfile(profile);
-      sessionStorage.setItem('iec_demo_uid', uid);
-      sessionStorage.setItem('iec_demo_role', 'customer');
+      safeSetSession('iec_demo_uid', uid);
+      safeSetSession('iec_demo_role', 'customer');
 
       await addAuditLog(
         'customer_registered',
@@ -467,8 +530,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
           await createOrUpdateUserProfile(profile);
         }
-        sessionStorage.setItem('iec_demo_uid', 'super_admin_seed');
-        sessionStorage.setItem('iec_demo_role', 'super_admin');
+        safeSetSession('iec_demo_uid', 'super_admin_seed');
+        safeSetSession('iec_demo_role', 'super_admin');
         setUserProfile(profile);
       } else if (role === 'sub_admin') {
         let profile = await getUserProfile('sub_admin_1');
@@ -489,8 +552,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
           await createOrUpdateUserProfile(profile);
         }
-        sessionStorage.setItem('iec_demo_uid', 'sub_admin_1');
-        sessionStorage.setItem('iec_demo_role', 'sub_admin');
+        safeSetSession('iec_demo_uid', 'sub_admin_1');
+        safeSetSession('iec_demo_role', 'sub_admin');
         setUserProfile(profile);
       } else {
         let profile = await getUserProfile('customer_demo_1');
@@ -514,8 +577,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
           await createOrUpdateUserProfile(profile);
         }
-        sessionStorage.setItem('iec_demo_uid', 'customer_demo_1');
-        sessionStorage.setItem('iec_demo_role', 'customer');
+        safeSetSession('iec_demo_uid', 'customer_demo_1');
+        safeSetSession('iec_demo_role', 'customer');
         setUserProfile(profile);
       }
     } finally {
@@ -603,32 +666,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     if (isLoggingOutRef.current) return;
     isLoggingOutRef.current = true;
+    const uidToOffline = userProfileRef.current?.uid || currentUserRef.current?.uid;
+
+    // Immediately clear session state and storage so logout never blocks on network calls
+    lastActivityMemoryRef.current = 0;
+    safeRemoveLocal(ACTIVITY_STORAGE_KEY);
+    safeRemoveSession('iec_demo_uid');
+    safeRemoveSession('iec_demo_role');
+    safeRemoveSession('iec_active_tab');
+    setUserProfile(null);
+    setCurrentUser(null);
+
     try {
-      if (userProfile?.uid) {
-        try {
-          await updateUserPresence(userProfile.uid, false);
-        } catch (e) {}
+      const cleanupTasks: Promise<unknown>[] = [
+        signOut(auth).catch((e) => {
+          console.warn(e);
+        })
+      ];
+      if (uidToOffline) {
+        cleanupTasks.push(updateUserPresence(uidToOffline, false).catch(() => {}));
       }
-      try {
-        localStorage.removeItem(ACTIVITY_STORAGE_KEY);
-        sessionStorage.removeItem('iec_demo_uid');
-        sessionStorage.removeItem('iec_demo_role');
-        sessionStorage.removeItem('iec_active_tab');
-      } catch (e) {}
-      setUserProfile(null);
-      setCurrentUser(null);
-      try {
-        await signOut(auth);
-      } catch (e) {
-        console.warn(e);
-      }
+      await Promise.race([
+        Promise.allSettled(cleanupTasks),
+        new Promise((resolve) => setTimeout(resolve, 2500))
+      ]);
     } finally {
       isLoggingOutRef.current = false;
     }
-  };
+  }, []);
+
+  const logoutRef = useRef(logout);
+  useEffect(() => {
+    logoutRef.current = logout;
+  }, [logout]);
 
   // User online presence heartbeat & unload listener
   useEffect(() => {
@@ -654,29 +727,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [userProfile?.uid]);
 
-  // 30-minute inactivity auto-logout (quietly logs out without displaying any reason)
+  // 30-minute inactivity auto-logout across the entire website (quietly logs out without displaying any reason)
   useEffect(() => {
     if (!userProfile && !currentUser) {
-      try {
-        localStorage.removeItem(ACTIVITY_STORAGE_KEY);
-      } catch (e) {}
+      lastActivityMemoryRef.current = 0;
+      safeRemoveLocal(ACTIVITY_STORAGE_KEY);
       return;
     }
 
+    const getLastRecordedTime = (): number => {
+      const storedStr = safeGetLocal(ACTIVITY_STORAGE_KEY);
+      if (storedStr) {
+        const parsed = parseInt(storedStr, 10);
+        if (Number.isFinite(parsed)) {
+          return Math.max(parsed, lastActivityMemoryRef.current || 0);
+        }
+      }
+      return lastActivityMemoryRef.current || Date.now();
+    };
+
     // Ensure a valid activity timestamp exists when session starts
-    if (!localStorage.getItem(ACTIVITY_STORAGE_KEY)) {
+    if (!safeGetLocal(ACTIVITY_STORAGE_KEY) || !lastActivityMemoryRef.current) {
       markSessionActive();
     }
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    let lastRecorded = Date.now();
+    let lastRecorded = getLastRecordedTime();
 
     const performQuietLogout = async () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
-      await logout();
+      await logoutRef.current();
     };
 
     const scheduleTimeout = (referenceTime: number) => {
@@ -688,9 +771,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const checkInactivity = (): boolean => {
-      const lastStr = localStorage.getItem(ACTIVITY_STORAGE_KEY);
-      const lastTime = lastStr ? parseInt(lastStr, 10) : lastRecorded;
-      if (Number.isFinite(lastTime) && Date.now() - lastTime >= INACTIVITY_TIMEOUT_MS) {
+      const lastTime = getLastRecordedTime();
+      if (Number.isFinite(lastTime) && lastTime > 0 && Date.now() - lastTime >= INACTIVITY_TIMEOUT_MS) {
         performQuietLogout();
         return true;
       }
@@ -698,36 +780,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const updateActivity = () => {
-      // If 30 minutes have already elapsed (e.g. device woke from sleep), log out instead of resetting
+      // If 30 minutes have already elapsed (e.g. device woke from sleep or background throttling), log out immediately
       if (checkInactivity()) return;
 
       const now = Date.now();
-      if (now - lastRecorded > 5000) {
+      if (now - lastRecorded > 1000) {
         lastRecorded = now;
-        try {
-          localStorage.setItem(ACTIVITY_STORAGE_KEY, now.toString());
-        } catch (e) {}
+        markSessionActive(now);
         scheduleTimeout(now);
       }
     };
 
     // Initial check & timer schedule
     if (!checkInactivity()) {
-      const lastStr = localStorage.getItem(ACTIVITY_STORAGE_KEY);
-      const lastTime = lastStr ? parseInt(lastStr, 10) : lastRecorded;
-      scheduleTimeout(Number.isFinite(lastTime) ? lastTime : lastRecorded);
+      const initialTime = getLastRecordedTime();
+      lastRecorded = initialTime;
+      scheduleTimeout(initialTime);
     }
 
     // Periodic fallback check every 10 seconds
     const intervalId = setInterval(checkInactivity, 10000);
 
-    // Track user interaction events
-    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click', 'wheel', 'pointerdown'];
+    // Track user interaction events across all nested scrollable containers (capture: true)
+    const activityEvents = [
+      'mousedown',
+      'mousemove',
+      'keydown',
+      'input',
+      'scroll',
+      'touchstart',
+      'touchmove',
+      'click',
+      'wheel',
+      'pointerdown'
+    ];
     activityEvents.forEach((evt) => {
-      window.addEventListener(evt, updateActivity, { passive: true });
+      document.addEventListener(evt, updateActivity, { passive: true, capture: true });
     });
 
-    // Check when user returns to tab or window gains focus
+    // Check when user returns to tab, window gains focus, or browser restores from bfcache
     const handleVisibilityOrFocus = () => {
       if (document.visibilityState === 'visible') {
         checkInactivity();
@@ -735,8 +826,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
     window.addEventListener('focus', handleVisibilityOrFocus);
+    window.addEventListener('pageshow', handleVisibilityOrFocus);
 
-    // Sync logout across tabs
+    // Sync activity and logout across tabs
     const handleStorage = (e: StorageEvent) => {
       if (e.key === ACTIVITY_STORAGE_KEY && e.newValue === null) {
         performQuietLogout();
@@ -744,6 +836,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const parsed = parseInt(e.newValue, 10);
         if (Number.isFinite(parsed)) {
           lastRecorded = parsed;
+          lastActivityMemoryRef.current = parsed;
           scheduleTimeout(parsed);
         }
       }
@@ -754,13 +847,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (timeoutId) clearTimeout(timeoutId);
       clearInterval(intervalId);
       activityEvents.forEach((evt) => {
-        window.removeEventListener(evt, updateActivity);
+        document.removeEventListener(evt, updateActivity, { capture: true });
       });
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
+      window.removeEventListener('pageshow', handleVisibilityOrFocus);
       window.removeEventListener('storage', handleStorage);
     };
-  }, [userProfile?.uid, currentUser?.uid]);
+  }, [userProfile?.uid, currentUser?.uid, markSessionActive]);
 
   const refreshProfile = async () => {
     if (userProfile?.uid) {
