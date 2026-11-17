@@ -710,89 +710,87 @@ export const SubAdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* TOP HEADER - Compact Single Row */}
-      <header className="bg-[#0b132b] text-white px-3 sm:px-6 py-2.5 border-b border-[#1c2541] shadow-md sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
-          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
-            {/* Siders Toggle */}
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm transition-all flex items-center space-x-1.5 cursor-pointer shrink-0"
-              title={sidebarOpen ? 'Full Screen Mode (Hide Sidebar)' : 'Show All Navigation Siders'}
-            >
-              <Menu className="w-4 h-4 text-white" />
-              <span className="hidden sm:inline">{sidebarOpen ? 'Full Screen' : 'All Siders'}</span>
-            </button>
+      {/* TOP HEADER - Shown only on Overview */}
+      {activeTab === 'overview' && (
+        <header className="bg-[#0b132b] text-white px-3 sm:px-6 py-2.5 border-b border-[#1c2541] shadow-md sticky top-0 z-40">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
+            <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
+              {/* Siders Toggle */}
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm transition-all flex items-center space-x-1.5 cursor-pointer shrink-0"
+                title={sidebarOpen ? 'Full Screen Mode (Hide Sidebar)' : 'Show All Navigation Siders'}
+              >
+                <Menu className="w-4 h-4 text-white" />
+                <span className="hidden sm:inline">{sidebarOpen ? 'Full Screen' : 'All Siders'}</span>
+              </button>
 
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm text-white shadow-sm shrink-0">
-              <Truck className="w-4 h-4" />
-            </div>
-
-            <div className="min-w-0">
-              <div className="flex items-center space-x-1.5 sm:space-x-2">
-                <h1 className="text-xs sm:text-sm font-black text-white truncate">Sub Admin Station</h1>
-                <span className="px-2 py-0.2 rounded-full text-[9px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 uppercase shrink-0">
-                  Consignee Control
-                </span>
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm text-white shadow-sm shrink-0">
+                <Truck className="w-4 h-4" />
               </div>
-              <p className="text-[10px] sm:text-[11px] text-gray-400 truncate">
-                Station Officer: <strong className="text-gray-200">{subAdminName}</strong> ({userProfile?.email || 'subadmin'})
-              </p>
+
+              <div className="min-w-0">
+                <div className="flex items-center space-x-1.5 sm:space-x-2">
+                  <h1 className="text-xs sm:text-sm font-black text-white truncate">Sub Admin Station</h1>
+                  <span className="px-2 py-0.2 rounded-full text-[9px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 uppercase shrink-0">
+                    Consignee Control
+                  </span>
+                </div>
+                <p className="text-[10px] sm:text-[11px] text-gray-400 truncate">
+                  Station Officer: <strong className="text-gray-200">{subAdminName}</strong> ({userProfile?.email || 'subadmin'})
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Metrics & Sign Out */}
+            <div className="flex items-center space-x-2 shrink-0">
+              <button
+                onClick={() => setActiveTab('customers')}
+                className="hidden md:flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors bg-slate-800 text-gray-300 hover:bg-slate-700 cursor-pointer"
+              >
+                <Users className="w-3.5 h-3.5 text-blue-400" />
+                <span>{totalAssignedCustomers} Customers</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('messages')}
+                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors bg-slate-800 text-gray-300 hover:bg-slate-700 cursor-pointer"
+                title="Customer Support Chat"
+              >
+                <MessageSquare className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="hidden sm:inline">Messages</span>
+                {totalUnreadMessages > 0 && (
+                  <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-extrabold animate-pulse">
+                    {totalUnreadMessages}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('notifications')}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-gray-300 relative cursor-pointer"
+                title="Notifications"
+              >
+                <Bell className="w-4 h-4 text-amber-400" />
+                {unreadNotificationsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-500 rounded-full" />
+                )}
+              </button>
+
+              <button
+                onClick={async () => {
+                  await logout();
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+                title="Sign Out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Sign Out</span>
+              </button>
             </div>
           </div>
-
-          {/* Quick Metrics & Sign Out */}
-          <div className="flex items-center space-x-2 shrink-0">
-            <button
-              onClick={() => setActiveTab('customers')}
-              className={`hidden md:flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
-                activeTab === 'customers' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5 text-blue-400" />
-              <span>{totalAssignedCustomers} Customers</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('messages')}
-              className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
-                activeTab === 'messages' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-gray-300 hover:bg-slate-700'
-              }`}
-              title="Customer Support Chat"
-            >
-              <MessageSquare className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="hidden sm:inline">Messages</span>
-              {totalUnreadMessages > 0 && (
-                <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-extrabold animate-pulse">
-                  {totalUnreadMessages}
-                </span>
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveTab('notifications')}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-gray-300 relative cursor-pointer"
-              title="Notifications"
-            >
-              <Bell className="w-4 h-4 text-amber-400" />
-              {unreadNotificationsCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-500 rounded-full" />
-              )}
-            </button>
-
-            <button
-              onClick={async () => {
-                await logout();
-              }}
-              className="px-2.5 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
-              title="Sign Out"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Sign Out</span>
-            </button>
-          </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       {/* Mobile Drawer Backdrop when sidebar is open on mobile */}
       {sidebarOpen && (
@@ -1242,16 +1240,25 @@ export const SubAdminDashboard: React.FC = () => {
           {activeTab === 'customers' && (
             <div className="bg-white rounded-2xl border border-gray-200 p-5 sm:p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <h2 className="text-lg font-black text-gray-900">My Assigned Customers</h2>
-                    <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                      {customers.length} Allocated
-                    </span>
+                <div className="flex items-start space-x-3">
+                  <button
+                    onClick={() => setActiveTab('overview')}
+                    className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-gray-700 transition-colors cursor-pointer shrink-0"
+                    title="Back to Overview"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <h2 className="text-lg font-black text-gray-900">My Assigned Customers</h2>
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                        {customers.length} Allocated
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Customers assigned specifically to you by Main Admin. Access is automatically synchronized.
+                    </p>
                   </div>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Customers assigned specifically to you by Main Admin. Access is automatically synchronized.
-                  </p>
                 </div>
 
                 <div className="relative min-w-[240px]">
@@ -1432,11 +1439,20 @@ export const SubAdminDashboard: React.FC = () => {
                 /* Conversation selection and initiation view */
                 <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-6">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
-                    <div>
-                      <h2 className="text-lg font-black text-gray-900">Customer Support Messages</h2>
-                      <p className="text-xs text-gray-500">
-                        Private direct messaging with your assigned customers. You can initiate a conversation at any time.
-                      </p>
+                    <div className="flex items-start space-x-3">
+                      <button
+                        onClick={() => setActiveTab('overview')}
+                        className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-gray-700 transition-colors cursor-pointer shrink-0"
+                        title="Back to Overview"
+                      >
+                        <ArrowLeft className="w-4 h-4" />
+                      </button>
+                      <div>
+                        <h2 className="text-lg font-black text-gray-900">Customer Support Messages</h2>
+                        <p className="text-xs text-gray-500">
+                          Private direct messaging with your assigned customers. You can initiate a conversation at any time.
+                        </p>
+                      </div>
                     </div>
 
                     {/* Quick Initiate Dropdown */}
@@ -1560,11 +1576,21 @@ export const SubAdminDashboard: React.FC = () => {
           {activeTab === 'create_delivery' && (
             <div className="bg-white rounded-2xl border border-gray-200 p-5 sm:p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="pb-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-lg font-black text-gray-900">Create & Assign New Delivery</h2>
-                  <p className="text-xs text-gray-500">
-                    Book an official air or ocean consignment. Deliveries are strictly restricted to your assigned customers.
-                  </p>
+                <div className="flex items-start space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('overview')}
+                    className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-gray-700 transition-colors cursor-pointer shrink-0"
+                    title="Back to Overview"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                  <div>
+                    <h2 className="text-lg font-black text-gray-900">Create & Assign New Delivery</h2>
+                    <p className="text-xs text-gray-500">
+                      Book an official air or ocean consignment. Deliveries are strictly restricted to your assigned customers.
+                    </p>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -2003,11 +2029,20 @@ export const SubAdminDashboard: React.FC = () => {
           {activeTab === 'deliveries' && (
             <div className="bg-white rounded-2xl border border-gray-200 p-5 sm:p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
-                <div>
-                  <h2 className="text-lg font-black text-gray-900">Delivery Management</h2>
-                  <p className="text-xs text-gray-500">
-                    Edit, monitor, and control deliveries belonging exclusively to your assigned customers.
-                  </p>
+                <div className="flex items-start space-x-3">
+                  <button
+                    onClick={() => setActiveTab('overview')}
+                    className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-gray-700 transition-colors cursor-pointer shrink-0"
+                    title="Back to Overview"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                  <div>
+                    <h2 className="text-lg font-black text-gray-900">Delivery Management</h2>
+                    <p className="text-xs text-gray-500">
+                      Edit, monitor, and control deliveries belonging exclusively to your assigned customers.
+                    </p>
+                  </div>
                 </div>
 
                 <button
@@ -2179,11 +2214,20 @@ export const SubAdminDashboard: React.FC = () => {
           {activeTab === 'tracking' && (
             <div className="bg-white rounded-2xl border border-gray-200 p-5 sm:p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="pb-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-black text-gray-900">Live Delivery Tracking Control</h2>
-                  <p className="text-xs text-gray-500">
-                    Update package checkpoints, movement status, location coordinates, and progress. Every update reflects immediately on the assigned customer's tracking page.
-                  </p>
+                <div className="flex items-start space-x-3">
+                  <button
+                    onClick={() => setActiveTab('overview')}
+                    className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-gray-700 transition-colors cursor-pointer shrink-0"
+                    title="Back to Overview"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                  <div>
+                    <h2 className="text-lg font-black text-gray-900">Live Delivery Tracking Control</h2>
+                    <p className="text-xs text-gray-500">
+                      Update package checkpoints, movement status, location coordinates, and progress. Every update reflects immediately on the assigned customer's tracking page.
+                    </p>
+                  </div>
                 </div>
 
                 {/* Consignment Selector */}
@@ -2600,11 +2644,20 @@ export const SubAdminDashboard: React.FC = () => {
           {activeTab === 'notifications' && (
             <div className="bg-white rounded-2xl border border-gray-200 p-5 sm:p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="pb-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-black text-gray-900">Notifications & Dispatch Alerts</h2>
-                  <p className="text-xs text-gray-500">
-                    Real-time alerts for customer messages, tracking updates, and account events.
-                  </p>
+                <div className="flex items-start space-x-3">
+                  <button
+                    onClick={() => setActiveTab('overview')}
+                    className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-gray-700 transition-colors cursor-pointer shrink-0"
+                    title="Back to Overview"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+                  <div>
+                    <h2 className="text-lg font-black text-gray-900">Notifications & Dispatch Alerts</h2>
+                    <p className="text-xs text-gray-500">
+                      Real-time alerts for customer messages, tracking updates, and account events.
+                    </p>
+                  </div>
                 </div>
 
                 <div className="flex items-center space-x-2">

@@ -581,7 +581,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                           {(msg.isDirectToCustomer || msg.hiddenFromSubAdmin) && (
                             <span className="px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 text-[9px] font-bold border border-purple-200 flex items-center space-x-1">
                               <Lock className="w-2.5 h-2.5 text-purple-600" />
-                              <span>Direct to Customer (Sub Admin Hidden)</span>
+                              <span>Direct Private Message</span>
                             </span>
                           )}
                         </div>
@@ -621,7 +621,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                           setEditText(msg.customerDisplayText || msg.text);
                         }}
                         className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 font-bold flex items-center space-x-1 transition-colors cursor-pointer border border-amber-500/30 shadow-2xs"
-                        title="Edit Customer-Facing Text (Sub-Admin will continue to see their original message)"
+                        title="Edit Message"
                       >
                         <Edit2 className="w-3 h-3 text-amber-600" />
                         <span>Edit for Customer</span>
@@ -709,13 +709,13 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                     <div className="mt-2 pt-2 border-t border-amber-300/40 text-[10px] text-amber-200 space-y-0.5">
                       <div className="font-bold flex items-center space-x-1">
                         <Edit2 className="w-3 h-3" />
-                        <span>Super Admin Modified for Customer View:</span>
+                        <span>Modified Message:</span>
                       </div>
                       <div className="opacity-90">
-                        Customer sees: &ldquo;{msg.customerDisplayText}&rdquo;
+                        Updated: &ldquo;{msg.customerDisplayText}&rdquo;
                       </div>
                       <div className="opacity-75 italic">
-                        Sub-Admin still sees original: &ldquo;{msg.text}&rdquo;
+                        Original: &ldquo;{msg.text}&rdquo;
                       </div>
                     </div>
                   )}
@@ -825,9 +825,9 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
       {/* Input Area matching image_af72ee61.png */}
       <div className="p-3 bg-white border-t border-gray-200 space-y-2">
-        {/* Super Admin Direct Message Option (User: super admin can also send direct message to the customer, sub admin will not see it) */}
+        {/* Super Admin Direct Message Toggle */}
         {isSuperAdmin && (
-          <div className="px-3 py-2 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200/80 rounded-xl flex items-center justify-between text-xs text-purple-900 gap-2 flex-wrap shadow-2xs">
+          <div className="px-3 py-1.5 bg-purple-50/70 border border-purple-200/80 rounded-xl flex items-center justify-between text-xs text-purple-900">
             <label className="flex items-center space-x-2 cursor-pointer font-bold select-none text-[11px]">
               <input
                 type="checkbox"
@@ -837,24 +837,9 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               />
               <span className="flex items-center space-x-1.5 text-purple-950">
                 <Lock className="w-3.5 h-3.5 text-purple-700" />
-                <span>Send Direct Message to Customer (Sub Admin will not see it)</span>
+                <span>Direct Message to Customer</span>
               </span>
             </label>
-            <span className="text-[10px] text-purple-800 bg-purple-100/80 px-2 py-0.5 rounded-full font-extrabold flex items-center space-x-1 border border-purple-200">
-              <Shield className="w-2.5 h-2.5 text-purple-600" />
-              <span>Customer sees: <strong>Company Support</strong></span>
-            </span>
-          </div>
-        )}
-
-        {/* Sub Admin Company Support Identity Notice */}
-        {isSubAdmin && (
-          <div className="px-3 py-1 bg-blue-50/80 border border-blue-100 rounded-lg flex items-center justify-between text-[11px] text-blue-900">
-            <span className="flex items-center space-x-1.5">
-              <Shield className="w-3 h-3 text-blue-600" />
-              <span>Official Channel Identity: <strong>Company Support</strong></span>
-            </span>
-            <span className="text-[10px] text-blue-600 font-medium">Customer sees all messages as Company Support</span>
           </div>
         )}
 
@@ -879,9 +864,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             }
           }}
           placeholder={
-            isSuperAdmin
-              ? (superAdminDirectToCustomer ? "Type direct message to customer (Hidden from Sub Admin, seen as Company Support)..." : "Type message to customer (Visible to all)...")
-              : isCustomer
+            isCustomer
               ? "Type message to Company Support..."
               : "Type reply to customer (Shift+Enter for newline, Enter to send)..."
           }
