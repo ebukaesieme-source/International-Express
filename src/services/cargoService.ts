@@ -84,6 +84,7 @@ export async function createOrUpdateUserProfile(profile: Partial<UserProfile> & 
       isSuspended: profile.isSuspended ?? existing?.isSuspended ?? false,
       notes: profile.notes ?? existing?.notes ?? '',
       customPassword: profile.customPassword ?? existing?.customPassword,
+      usaOnlyLogin: profile.usaOnlyLogin ?? existing?.usaOnlyLogin,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };

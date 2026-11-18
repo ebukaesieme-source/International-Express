@@ -85,6 +85,7 @@ import {
 } from '../services/cargoService';
 import { ChatComponent } from '../components/ChatComponent';
 import { TrackingSection } from '../components/TrackingSection';
+import { isUsaOnlyRestrictedAccount } from '../utils/geoAccess';
 
 export const SuperAdminDashboard: React.FC = () => {
   const { userProfile, logout, changeSuperAdminPassword, updateSuperAdminProfile } = useAuth();
@@ -158,7 +159,8 @@ export const SuperAdminDashboard: React.FC = () => {
     city: '',
     country: '',
     notes: '',
-    newPassword: ''
+    newPassword: '',
+    usaOnlyLogin: false
   });
   const [showUserPassText, setShowUserPassText] = useState(false);
   const [savingEditUser, setSavingEditUser] = useState(false);
@@ -371,7 +373,8 @@ export const SuperAdminDashboard: React.FC = () => {
       city: user.city || '',
       country: user.country || 'United States',
       notes: user.notes || '',
-      newPassword: user.customPassword || ''
+      newPassword: user.customPassword || '',
+      usaOnlyLogin: isUsaOnlyRestrictedAccount(user)
     });
   };
 
@@ -388,7 +391,8 @@ export const SuperAdminDashboard: React.FC = () => {
         address: editUserForm.address.trim(),
         city: editUserForm.city.trim(),
         country: editUserForm.country.trim(),
-        notes: editUserForm.notes.trim()
+        notes: editUserForm.notes.trim(),
+        usaOnlyLogin: editUserForm.usaOnlyLogin
       };
 
       if (editUserForm.newPassword.trim()) {
@@ -1301,7 +1305,14 @@ export const SuperAdminDashboard: React.FC = () => {
                         return (
                           <tr key={cust.uid} className="hover:bg-slate-50/80 transition-colors">
                             <td className="py-3.5 px-4">
-                              <div className="font-bold text-gray-900">{cust.fullName}</div>
+                              <div className="flex items-center flex-wrap gap-1.5">
+                                <span className="font-bold text-gray-900">{cust.fullName}</span>
+                                {isUsaOnlyRestrictedAccount(cust) && (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase bg-blue-50 text-blue-700 border border-blue-200">
+                                    USA Only Login
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-gray-500 text-[11px]">{cust.email}</div>
                               <div className="text-gray-400 text-[10px]">{cust.phoneNumber || cust.phone || 'No phone'}</div>
                             </td>
@@ -2645,6 +2656,23 @@ export const SuperAdminDashboard: React.FC = () => {
                     onChange={(e) => setEditUserForm({ ...editUserForm, notes: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-blue-600 resize-none"
                   />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="flex items-start space-x-3 p-3 rounded-2xl bg-blue-50/70 border border-blue-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editUserForm.usaOnlyLogin}
+                      onChange={(e) => setEditUserForm({ ...editUserForm, usaOnlyLogin: e.target.checked })}
+                      className="mt-0.5 w-4 h-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <div>
+                      <div className="text-xs font-extrabold text-blue-950">USA-Only Login Access</div>
+                      <p className="text-[11px] text-blue-800 mt-0.5">
+                        Restrict sign-in exclusively to persons or phones located within the United States (USA).
+                      </p>
+                    </div>
+                  </label>
                 </div>
               </div>
 

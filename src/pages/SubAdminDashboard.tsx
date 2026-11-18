@@ -72,6 +72,7 @@ import {
   deleteItemizedFee
 } from '../services/cargoService';
 import { ChatComponent } from '../components/ChatComponent';
+import { isUsaOnlyRestrictedAccount } from '../utils/geoAccess';
 
 type SubAdminTab =
   | 'overview'
@@ -1331,15 +1332,22 @@ export const SubAdminDashboard: React.FC = () => {
                             </div>
                           </div>
 
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase shrink-0 ${
-                              cust.isSuspended
-                                ? 'bg-red-100 text-red-700'
-                                : 'bg-emerald-100 text-emerald-700'
-                            }`}
-                          >
-                            {cust.isSuspended ? 'Suspended' : 'Active Account'}
-                          </span>
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                                cust.isSuspended
+                                  ? 'bg-red-100 text-red-700'
+                                  : 'bg-emerald-100 text-emerald-700'
+                              }`}
+                            >
+                              {cust.isSuspended ? 'Suspended' : 'Active Account'}
+                            </span>
+                            {isUsaOnlyRestrictedAccount(cust) && (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase bg-blue-50 text-blue-700 border border-blue-200">
+                                USA Login Only
+                              </span>
+                            )}
+                          </div>
                         </div>
 
 

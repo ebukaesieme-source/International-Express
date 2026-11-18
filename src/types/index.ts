@@ -22,6 +22,7 @@ export interface UserProfile {
   customPassword?: string;
   isOnline?: boolean;
   lastSeen?: string;
+  usaOnlyLogin?: boolean;
   createdAt: string;
   updatedAt: string;
 }

@@ -15,6 +15,7 @@
         "assignedSubAdminId": { "type": "string" },
         "assignedSubAdminName": { "type": "string" },
         "isSuspended": { "type": "boolean" },
+        "usaOnlyLogin": { "type": "boolean" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
       },

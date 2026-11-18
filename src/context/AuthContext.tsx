@@ -13,6 +13,11 @@ import {
 import { auth } from '../lib/firebase';
 import { UserProfile, UserRole } from '../types';
 import {
+  GeoAccessError,
+  isUsaOnlyRestrictedAccount,
+  verifyUserInUSA
+} from '../utils/geoAccess';
+import {
   getUserProfile,
   createOrUpdateUserProfile,
   updateUserPassword,
@@ -128,6 +133,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     safeSetLocal(ACTIVITY_STORAGE_KEY, timestamp.toString());
   }, []);
 
+  const enforceUsaAccessForProfile = useCallback(async (
+    profile: Partial<UserProfile> | null,
+    fallbackEmail?: string
+  ) => {
+    if (!isUsaOnlyRestrictedAccount(profile, fallbackEmail)) {
+      return;
+    }
+    const geo = await verifyUserInUSA();
+    if (!geo.allowed) {
+      addAuditLog(
+        'blocked_non_usa_login',
+        profile?.fullName || fallbackEmail || 'Restricted User',
+        profile?.role || 'customer',
+        `Blocked login attempt for USA-only account (${profile?.email || fallbackEmail || profile?.uid || 'unknown'}) from location: ${geo.countryName || geo.countryCode || 'Unverified'}`,
+        profile?.uid
+      ).catch(() => {});
+
+      lastActivityMemoryRef.current = 0;
+      safeRemoveLocal(ACTIVITY_STORAGE_KEY);
+      safeRemoveSession('iec_demo_uid');
+      safeRemoveSession('iec_demo_role');
+      safeRemoveSession('iec_active_tab');
+      setUserProfile(null);
+      setCurrentUser(null);
+      try {
+        await signOut(auth);
+      } catch {}
+      throw new GeoAccessError(
+        geo.reason ||
+          'Invalid email or password. Please verify your credentials.'
+      );
+    }
+  }, []);
+
   // Initial seed and auth sync
   useEffect(() => {
     seedInitialDemoData().catch(console.error);
@@ -155,7 +194,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setCurrentUser(user);
         if (user) {
-          await syncUserProfile(user);
+          await syncUserProfile(user, false);
         } else {
           // Check if there was a local session override for demo accounts
           const cachedRole = safeGetSession('iec_demo_role');
@@ -163,6 +202,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (cachedUid && cachedRole) {
             let profile = await getUserProfile(cachedUid);
             if (profile) {
+              try {
+                await enforceUsaAccessForProfile(profile);
+              } catch (geoErr) {
+                if (geoErr instanceof GeoAccessError) {
+                  return;
+                }
+                throw geoErr;
+              }
               if (profile.assignedSubAdminName && (profile.assignedSubAdminName.includes('Marcus Vance') || profile.assignedSubAdminName.includes('Regional Dispatch Lead'))) {
                 profile = { ...profile, assignedSubAdminName: 'Company Support' };
               }
@@ -184,9 +231,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => unsubscribe();
-  }, [markSessionActive]);
+  }, [markSessionActive, enforceUsaAccessForProfile]);
 
-  const syncUserProfile = async (user: FirebaseUser) => {
+  const syncUserProfile = async (user: FirebaseUser, throwOnGeoBlock = false) => {
     try {
       let profile = await getUserProfile(user.uid);
       const cleanEmail = (user.email || '').toLowerCase().trim();
@@ -205,6 +252,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           uid: user.uid,
           role: 'sub_admin'
         };
+        await enforceUsaAccessForProfile(profile, cleanEmail);
         await createOrUpdateUserProfile(profile);
         if (existingByEmail.uid !== user.uid) {
           await deleteUser(existingByEmail.uid);
@@ -222,6 +270,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ...existingByEmail,
             uid: user.uid
           };
+          await enforceUsaAccessForProfile(profile, cleanEmail);
           await createOrUpdateUserProfile(profile);
         } else {
           const isSubAdminEmail = cleanEmail.includes('subadmin') || cleanEmail.endsWith('@subadmin.com');
@@ -236,19 +285,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
+          await enforceUsaAccessForProfile(profile, cleanEmail);
           await createOrUpdateUserProfile(profile);
         }
-      } else if (isSuperAdminEmail && profile.role !== 'super_admin') {
-        profile.role = 'super_admin';
-        await createOrUpdateUserProfile(profile);
       } else {
-        if (profile.assignedSubAdminName && (profile.assignedSubAdminName.includes('Marcus Vance') || profile.assignedSubAdminName.includes('Regional Dispatch Lead'))) {
-          profile = { ...profile, assignedSubAdminName: 'Company Support' };
+        await enforceUsaAccessForProfile(profile, cleanEmail);
+        if (isSuperAdminEmail && profile.role !== 'super_admin') {
+          profile.role = 'super_admin';
           await createOrUpdateUserProfile(profile);
-        }
-        if (profile.fullName && (profile.fullName.includes('Marcus Vance') || profile.fullName.includes('Regional Dispatch Lead'))) {
-          profile = { ...profile, fullName: 'London Station Dispatch' };
-          await createOrUpdateUserProfile(profile);
+        } else {
+          if (profile.assignedSubAdminName && (profile.assignedSubAdminName.includes('Marcus Vance') || profile.assignedSubAdminName.includes('Regional Dispatch Lead'))) {
+            profile = { ...profile, assignedSubAdminName: 'Company Support' };
+            await createOrUpdateUserProfile(profile);
+          }
+          if (profile.fullName && (profile.fullName.includes('Marcus Vance') || profile.fullName.includes('Regional Dispatch Lead'))) {
+            profile = { ...profile, fullName: 'London Station Dispatch' };
+            await createOrUpdateUserProfile(profile);
+          }
         }
       }
 
@@ -257,12 +310,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       safeSetSession('iec_demo_role', profile.role);
       setUserProfile(profile);
     } catch (err) {
+      if (err instanceof GeoAccessError && throwOnGeoBlock) {
+        throw err;
+      }
       console.error('Failed to sync user profile:', err);
     }
   };
 
   const loginWithEmail = async (email: string, pass: string) => {
-    setLoading(true);
     markSessionActive();
     const cleanEmail = email.trim().toLowerCase();
 
@@ -304,7 +359,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         safeSetSession('iec_demo_uid', superProfile.uid);
         safeSetSession('iec_demo_role', 'super_admin');
         setUserProfile(superProfile);
-        setLoading(false);
         return;
       }
     }
@@ -316,6 +370,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (match) {
         const expectedPass = match.customPassword || (match.role === 'sub_admin' ? 'subadmin12345' : '');
         if (expectedPass && (pass === expectedPass || pass === match.customPassword)) {
+          // Enforce USA-only login restriction BEFORE signing in or creating session
+          await enforceUsaAccessForProfile(match, cleanEmail);
+
           // Attempt background Firebase Auth sign-in / registration so Auth session exists
           try {
             await signInWithEmailAndPassword(auth, cleanEmail, pass);
@@ -330,25 +387,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           safeSetSession('iec_demo_uid', match.uid);
           safeSetSession('iec_demo_role', match.role);
           setUserProfile(match);
-          setLoading(false);
           return;
         }
       }
     } catch (e) {
+      if (e instanceof GeoAccessError) {
+        throw e;
+      }
       console.warn('Firestore database credential check:', e);
     }
 
     // 3. Direct Firebase Authentication Sign In
     try {
       const res = await signInWithEmailAndPassword(auth, cleanEmail, pass);
-      await syncUserProfile(res.user);
+      await syncUserProfile(res.user, true);
       const profile = await getUserProfile(res.user.uid);
+      await enforceUsaAccessForProfile(profile, cleanEmail);
       const resolvedRole = profile?.role || 'customer';
       safeSetSession('iec_demo_uid', res.user.uid);
       safeSetSession('iec_demo_role', resolvedRole);
-      setLoading(false);
       return;
     } catch (err: any) {
+      if (err instanceof GeoAccessError) {
+        throw err;
+      }
       // Check sub admin demo accounts or customers
       if (cleanEmail === 'subadmin@expresscargo.com' && pass === 'subadmin12345') {
         let demoSub = await getUserProfile('sub_admin_1');
@@ -373,7 +435,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         safeSetSession('iec_demo_uid', 'sub_admin_1');
         safeSetSession('iec_demo_role', 'sub_admin');
         setUserProfile(demoSub);
-        setLoading(false);
         return;
       }
 
@@ -403,24 +464,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         safeSetSession('iec_demo_uid', 'customer_demo_1');
         safeSetSession('iec_demo_role', 'customer');
         setUserProfile(demoCust);
-        setLoading(false);
         return;
       }
 
       throw err;
-    } finally {
-      setLoading(false);
     }
   };
 
   const registerCustomer = async (data: RegisterData) => {
-    setLoading(true);
     markSessionActive();
     const cleanEmail = data.email.trim().toLowerCase();
     const cleanPassword = data.password.trim();
 
-    try {
-      let uid = '';
+    let uid = '';
 
       // 1. Register email and password directly on Firebase Authentication
       try {
@@ -490,28 +546,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         `New customer account registered on Firebase: ${profile.fullName} (${profile.email}), Country: ${profile.country}. Awaiting dispatch station acceptance.`,
         uid
       );
-    } finally {
-      setLoading(false);
-    }
   };
 
   const loginWithGoogle = async () => {
-    setLoading(true);
     markSessionActive();
-    try {
-      const provider = new GoogleAuthProvider();
-      const res = await signInWithPopup(auth, provider);
-      await syncUserProfile(res.user);
-    } finally {
-      setLoading(false);
-    }
+    const provider = new GoogleAuthProvider();
+    const res = await signInWithPopup(auth, provider);
+    await syncUserProfile(res.user, true);
   };
 
   const quickLoginAsRole = async (role: UserRole) => {
-    setLoading(true);
     markSessionActive();
-    try {
-      if (role === 'super_admin') {
+    if (role === 'super_admin') {
         let profile = await getUserProfile('super_admin_seed');
         if (!profile) {
           profile = {
@@ -581,15 +627,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         safeSetSession('iec_demo_role', 'customer');
         setUserProfile(profile);
       }
-    } finally {
-      setLoading(false);
-    }
   };
 
   const changeSuperAdminPassword = async (newPassword: string, targetUid?: string) => {
-    setLoading(true);
-    try {
-      const targetId = targetUid || userProfile?.uid || 'super_admin_seed';
+    const targetId = targetUid || userProfile?.uid || 'super_admin_seed';
       // 1. If currently signed in user is changing their own password via Firebase Auth
       if (!targetUid || targetUid === userProfile?.uid) {
         if (currentUser) {
@@ -626,15 +667,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUserProfile({ ...userProfile, customPassword: newPassword });
         }
       }
-    } finally {
-      setLoading(false);
-    }
   };
 
   const updateSuperAdminProfile = async (updates: Partial<UserProfile>, targetUid?: string) => {
-    setLoading(true);
-    try {
-      const targetId = targetUid || userProfile?.uid || 'super_admin_seed';
+    const targetId = targetUid || userProfile?.uid || 'super_admin_seed';
       await createOrUpdateUserProfile({
         ...updates,
         uid: targetId
@@ -661,9 +697,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUserProfile({ ...userProfile, ...updates });
         }
       }
-    } finally {
-      setLoading(false);
-    }
   };
 
   const logout = useCallback(async () => {
