@@ -1556,7 +1556,7 @@ export const SubAdminDashboard: React.FC = () => {
                                   )}
                                 </div>
                                 <p className="text-[11px] text-gray-500 truncate max-w-md mt-0.5">
-                                  {conv.subAdminLastMessage || conv.lastMessage || 'Channel active'}
+                                  {conv.subAdminLastMessage || 'Channel active'}
                                 </p>
                               </div>
                             </div>

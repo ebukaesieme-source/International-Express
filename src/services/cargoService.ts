@@ -1105,6 +1105,20 @@ export async function getSubAdminConversations(subAdminId: string): Promise<Conv
   }
 }
 
+export function isMessageVisibleToSubAdmin(m: Pick<ChatMessage, 'senderRole' | 'isDeleted' | 'hiddenFromSubAdmin' | 'isDirectToCustomer' | 'sharedWithSubAdmin' | 'moderationStatus'>): boolean {
+  if (m.isDeleted) return false;
+  if (m.hiddenFromSubAdmin === true || m.isDirectToCustomer === true || m.sharedWithSubAdmin === false) {
+    return false;
+  }
+  if (m.senderRole === 'super_admin') {
+    return m.sharedWithSubAdmin === true;
+  }
+  if (m.senderRole === 'sub_admin') {
+    return true;
+  }
+  return m.sharedWithSubAdmin === true && m.moderationStatus !== 'rejected';
+}
+
 export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): Promise<string> {
   const path = 'messages';
   try {
@@ -1119,7 +1133,7 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
     if (msg.moderationStatus === 'approved') {
       const msgSummary = msg.text || (msg.attachmentType ? `[${msg.attachmentType.toUpperCase()}]` : 'Sent attachment');
       const isCustomer = msg.senderRole === 'customer';
-      const isSuperAdminDirect = msg.senderRole === 'super_admin' && (msg.hiddenFromSubAdmin === true || msg.isDirectToCustomer === true || msg.sharedWithSubAdmin === false);
+      const visibleToSubAdmin = isMessageVisibleToSubAdmin(msg);
 
       const convRef = doc(db, 'conversations', msg.conversationId);
       const convSnap = await getDoc(convRef);
@@ -1131,7 +1145,7 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
         curUnreadAdmin = cData.unreadAdminCount || 0;
       }
 
-      // If Super Admin sends direct to customer, Sub-Admin will not see it:
+      // If Super Admin sends direct to customer (or message is hidden from Sub-Admin):
       // - Do NOT update subAdminLastMessage (sub admin won't see preview)
       // - Do NOT increment unreadAdminCount (sub admin won't see unread badge)
       const updateData: Record<string, any> = {
@@ -1141,7 +1155,7 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
         updatedAt: now
       };
 
-      if (!isSuperAdminDirect) {
+      if (visibleToSubAdmin) {
         updateData.subAdminLastMessage = msgSummary;
         updateData.unreadAdminCount = isCustomer ? (curUnreadAdmin + 1) : curUnreadAdmin;
       }
@@ -1188,22 +1202,9 @@ export function subscribeToMessages(
       // Filter out deleted messages
       msgs = msgs.filter(m => !m.isDeleted);
 
-      // If user is sub_admin, only show messages if:
-      // - Sent by sub_admin
-      // - OR customer message where sharedWithSubAdmin is explicitly true
-      // - Super Admin direct messages to customer are HIDDEN (sub admin will NOT see them!)
+      // If user is sub_admin, strictly apply Sub Admin visibility filter
       if (userRole === 'sub_admin') {
-        msgs = msgs.filter(m => {
-          if (m.senderRole === 'super_admin') {
-            // Super Admin direct message to customer: Sub Admin will NOT see it!
-            if (m.hiddenFromSubAdmin === true || m.isDirectToCustomer === true || m.sharedWithSubAdmin === false) {
-              return false;
-            }
-            return m.sharedWithSubAdmin === true;
-          }
-          if (m.senderRole === 'sub_admin') return true;
-          return m.sharedWithSubAdmin === true && m.moderationStatus !== 'rejected';
-        });
+        msgs = msgs.filter(isMessageVisibleToSubAdmin);
       }
 
       // If user is customer, show approved messages, direct admin messages, and their own messages
@@ -1283,14 +1284,17 @@ export async function editMessage(
     });
 
     // Update conversation lastMessage so customer sees the new message preview,
-    // while subAdminLastMessage keeps the sub-admin's original message!
+    // while subAdminLastMessage is ONLY updated if this message is visible to Sub-Admin!
     if (current.conversationId) {
       try {
-        await updateDoc(doc(db, 'conversations', current.conversationId), {
+        const convUpdate: Record<string, any> = {
           lastMessage: newText,
-          subAdminLastMessage: originalText,
           updatedAt: new Date().toISOString()
-        });
+        };
+        if (isMessageVisibleToSubAdmin(current)) {
+          convUpdate.subAdminLastMessage = originalText;
+        }
+        await updateDoc(doc(db, 'conversations', current.conversationId), convUpdate);
       } catch (convErr) {
         console.warn('Notice updating conversation preview:', convErr);
       }
@@ -1306,10 +1310,35 @@ export async function toggleMessageSubAdminAccess(
 ): Promise<void> {
   const path = `messages/${messageId}`;
   try {
+    const snap = await getDoc(doc(db, 'messages', messageId));
+    const convId = snap.exists() ? (snap.data() as ChatMessage).conversationId : '';
+
     await updateDoc(doc(db, 'messages', messageId), {
       sharedWithSubAdmin: allowSubAdmin,
+      hiddenFromSubAdmin: !allowSubAdmin,
       moderationStatus: allowSubAdmin ? 'approved' : 'pending_moderation'
     });
+
+    if (convId) {
+      try {
+        const q = query(collection(db, 'messages'), where('conversationId', '==', convId));
+        const remSnap = await getDocs(q);
+        const visibleMsgs = remSnap.docs
+          .map(d => d.data() as ChatMessage)
+          .filter(isMessageVisibleToSubAdmin)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+        const latestSub = visibleMsgs[0];
+        await updateDoc(doc(db, 'conversations', convId), {
+          subAdminLastMessage: latestSub
+            ? (latestSub.originalText || latestSub.text || (latestSub.attachmentType ? `[${latestSub.attachmentType.toUpperCase()}]` : ''))
+            : '',
+          updatedAt: new Date().toISOString()
+        });
+      } catch (e) {
+        console.warn('Notice refreshing subAdminLastMessage on access toggle:', e);
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -1338,9 +1367,13 @@ export async function deleteMessage(messageId: string, deletedBy: string): Promi
           if (remMsgs.length > 0) {
             remMsgs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
             const latest = remMsgs[0];
+            const subAdminVisible = remMsgs.filter(isMessageVisibleToSubAdmin);
+            const latestSub = subAdminVisible[0];
             await updateDoc(doc(db, 'conversations', convId), {
               lastMessage: latest.customerDisplayText || latest.text || '',
-              subAdminLastMessage: latest.originalText || latest.text || '',
+              subAdminLastMessage: latestSub
+                ? (latestSub.originalText || latestSub.text || (latestSub.attachmentType ? `[${latestSub.attachmentType.toUpperCase()}]` : ''))
+                : '',
               lastMessageTime: latest.createdAt || new Date().toISOString(),
               updatedAt: new Date().toISOString()
             });
@@ -1351,6 +1384,12 @@ export async function deleteMessage(messageId: string, deletedBy: string): Promi
               updatedAt: new Date().toISOString()
             });
           }
+        } else {
+          await updateDoc(doc(db, 'conversations', convId), {
+            lastMessage: '',
+            subAdminLastMessage: '',
+            updatedAt: new Date().toISOString()
+          });
         }
       } catch (e) {
         console.warn('Notice updating conv on message deletion:', e);
@@ -1892,7 +1931,7 @@ export function subscribeToSubAdminConversations(
     async (snapshot) => {
       const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Conversation));
 
-      // Resolve original message text for each conversation so Sub-Admin NEVER sees Super Admin edits
+      // Resolve only Sub-Admin-visible messages so Sub-Admin NEVER sees Super Admin direct messages or edits
       await Promise.all(
         list.map(async (conv) => {
           try {
@@ -1904,19 +1943,29 @@ export function subscribeToSubAdminConversations(
             if (!msgSnap.empty) {
               const msgs = msgSnap.docs.map(d => d.data() as ChatMessage);
               msgs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-              const subAdminVisibleMsgs = msgs.filter(m =>
-                m.senderRole === 'sub_admin' ||
-                m.senderRole === 'super_admin' ||
-                m.sharedWithSubAdmin === true
-              );
+              const subAdminVisibleMsgs = msgs.filter(isMessageVisibleToSubAdmin);
               if (subAdminVisibleMsgs.length > 0) {
                 const latestMsg = subAdminVisibleMsgs[0];
-                // Sub Admin ALWAYS sees originalText || text, never customerDisplayText or super-admin edit!
-                conv.subAdminLastMessage = latestMsg.originalText || latestMsg.text;
+                // Sub Admin ALWAYS sees originalText || text, never customerDisplayText or Super Admin direct messages
+                const previewText = latestMsg.originalText || latestMsg.text || (latestMsg.attachmentType ? `[${latestMsg.attachmentType.toUpperCase()}]` : '');
+                conv.subAdminLastMessage = previewText;
+                conv.lastMessage = previewText;
+                conv.lastMessageTime = latestMsg.createdAt || conv.lastMessageTime;
+              } else {
+                conv.subAdminLastMessage = '';
+                conv.lastMessage = '';
+                conv.lastMessageTime = '';
+                conv.unreadAdminCount = 0;
               }
+            } else {
+              conv.subAdminLastMessage = '';
+              conv.lastMessage = '';
+              conv.lastMessageTime = '';
+              conv.unreadAdminCount = 0;
             }
           } catch {
-            // fallback gracefully
+            // Never leak raw conv.lastMessage to Sub Admin
+            conv.lastMessage = conv.subAdminLastMessage || '';
           }
         })
       );
