@@ -256,11 +256,12 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const handleToggleSubAdminAccess = async (msg: ChatMessage, allow: boolean) => {
     try {
       await toggleMessageSubAdminAccess(msg.id, allow);
+      const msgOwner = msg.senderRole === 'super_admin' ? 'Super Admin direct' : 'customer';
       await addAuditLog(
         allow ? 'message_released_to_subadmin' : 'message_held_from_subadmin',
         currentUserProfile.fullName,
         currentUserProfile.role,
-        `Super Admin ${allow ? 'released' : 'held'} customer message ID ${msg.id} ${allow ? 'for' : 'from'} Sub-Admin visibility.`,
+        `Super Admin turned Sub-Admin visibility ${allow ? 'ON' : 'OFF'} for ${msgOwner} message ID ${msg.id}.`,
         msg.id
       );
     } catch (err) {
@@ -502,16 +503,16 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             const isCustomerMsg = msg.senderRole === 'customer';
             const isSubAdminMsg = msg.senderRole === 'sub_admin';
             const isSuperAdminMsg = msg.senderRole === 'super_admin';
+            const isAdminSideMsg = isSubAdminMsg || isSuperAdminMsg;
 
-            // User requested: "chatting my own message supposed stay at right hand why the person sending message stays at left side"
-            // Ensure any message originating from the currently viewing user is always on the RIGHT (isMe = true)
-            const isMe = Boolean(
-              (msg.senderId && currentUserProfile.uid && msg.senderId === currentUserProfile.uid) ||
-              (msg.senderEmail && currentUserProfile.email && msg.senderEmail.toLowerCase().trim() === currentUserProfile.email.toLowerCase().trim()) ||
+            // Keep all Admin messages (Sub Admin & Super Admin) strictly on the Admin side,
+            // and Customer messages strictly on the Customer side.
+            const isMe = isCustomer ? isCustomerMsg : isAdminSideMsg;
+
+            const isOwnDirectMessage =
               (isCustomer && isCustomerMsg) ||
-              (isSubAdmin && (isSubAdminMsg || msg.senderId === currentUserProfile.uid)) ||
-              (isSuperAdmin && (isSuperAdminMsg || msg.senderId === currentUserProfile.uid))
-            );
+              (isSubAdmin && isSubAdminMsg) ||
+              (isSuperAdmin && isSuperAdminMsg);
 
             const displayText = getMessageDisplayText(msg);
 
@@ -519,7 +520,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             const displayedSenderName = isCustomer
               ? (isCustomerMsg ? (currentUserProfile.fullName || 'You') : 'Company Support')
               : isSubAdmin
-              ? (isSubAdminMsg ? 'Company Support (You)' : msg.senderName)
+              ? (isSubAdminMsg ? 'Company Support (You)' : isSuperAdminMsg ? 'Company Support' : msg.senderName)
               : (msg.senderRole === 'customer'
                   ? msg.senderName
                   : isSuperAdminMsg
@@ -546,7 +547,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                   </span>
 
                   <span className={`font-bold ${isMe ? 'text-blue-600' : 'text-gray-700'}`}>
-                    {isMe ? 'You' : displayedSenderName}
+                    {isOwnDirectMessage ? 'You' : displayedSenderName}
                   </span>
                   {isCustomer ? (
                     !isCustomerMsg ? (
@@ -561,7 +562,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                       </span>
                     )
                   ) : isSubAdmin ? (
-                    isSubAdminMsg ? (
+                    isSubAdminMsg || isSuperAdminMsg ? (
                       <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 text-[9px] font-black uppercase border border-blue-200 flex items-center space-x-1">
                         <Shield className="w-2.5 h-2.5 text-blue-600" />
                         <span>Company Support</span>
@@ -578,10 +579,15 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                           <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[9px] font-black uppercase border border-amber-300">
                             Super Admin
                           </span>
-                          {(msg.isDirectToCustomer || msg.hiddenFromSubAdmin) && (
+                          {msg.sharedWithSubAdmin === true && !msg.hiddenFromSubAdmin ? (
+                            <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-bold border border-emerald-200 flex items-center space-x-1">
+                              <Eye className="w-2.5 h-2.5 text-emerald-600" />
+                              <span>Sub Admin: ON</span>
+                            </span>
+                          ) : (
                             <span className="px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 text-[9px] font-bold border border-purple-200 flex items-center space-x-1">
                               <Lock className="w-2.5 h-2.5 text-purple-600" />
-                              <span>Direct Private Message</span>
+                              <span>Direct Private</span>
                             </span>
                           )}
                         </div>
@@ -605,25 +611,27 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                 <div
                   className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-2.5 shadow-xs relative group ${
                     isMe
-                      ? isSuperAdminMsg
-                        ? 'bg-gradient-to-br from-amber-600 to-amber-700 text-white rounded-tr-none self-end'
-                        : 'bg-blue-600 text-white rounded-tr-none self-end shadow-sm'
+                      ? 'bg-blue-600 text-white rounded-tr-none self-end shadow-sm'
                       : 'bg-white border border-gray-200 text-gray-800 rounded-tl-none self-start shadow-xs'
                   }`}
                 >
                   {/* Super Admin Control Actions: Edit for Customer & Delete Both Customer and Sub Admin Messages */}
                   {isSuperAdmin && (
-                    <div className="flex items-center space-x-1.5 mt-1 mb-2 pt-1 pb-1 border-b border-black/10 text-[10px] flex-wrap gap-y-1">
+                    <div className={`flex items-center space-x-1.5 mt-1 mb-2 pt-1 pb-1 border-b ${isMe ? 'border-white/20' : 'border-black/10'} text-[10px] flex-wrap gap-y-1`}>
                       {/* Edit button: Super Admin can edit Sub-Admin messages */}
                       <button
                         onClick={() => {
                           setEditingMessage(msg);
                           setEditText(msg.customerDisplayText || msg.text);
                         }}
-                        className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 font-bold flex items-center space-x-1 transition-colors cursor-pointer border border-amber-500/30 shadow-2xs"
+                        className={`px-2 py-0.5 rounded font-bold flex items-center space-x-1 transition-colors cursor-pointer shadow-2xs ${
+                          isMe
+                            ? 'bg-white/20 hover:bg-white/30 text-white border border-white/30'
+                            : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 border border-amber-500/30'
+                        }`}
                         title="Edit Message"
                       >
-                        <Edit2 className="w-3 h-3 text-amber-600" />
+                        <Edit2 className={`w-3 h-3 ${isMe ? 'text-white' : 'text-amber-600'}`} />
                         <span>Edit for Customer</span>
                       </button>
 
@@ -706,19 +714,55 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
                   {/* Super Admin Transparency View: Shows what customer sees vs what Sub-Admin sees if edited */}
                   {isSuperAdmin && msg.customerDisplayText && msg.customerDisplayText !== msg.text && (
-                    <div className="mt-2 pt-2 border-t border-amber-300/40 text-[10px] text-amber-200 space-y-0.5">
+                    <div className={`mt-2 pt-2 border-t text-[10px] space-y-0.5 ${isMe ? 'border-white/25 text-blue-100' : 'border-amber-300/60 text-amber-800'}`}>
                       <div className="font-bold flex items-center space-x-1">
                         <Edit2 className="w-3 h-3" />
                         <span>Modified Message:</span>
                       </div>
-                      <div className="opacity-90">
+                      <div className="opacity-95">
                         Updated: &ldquo;{msg.customerDisplayText}&rdquo;
                       </div>
-                      <div className="opacity-75 italic">
+                      <div className="opacity-80 italic">
                         Original: &ldquo;{msg.text}&rdquo;
                       </div>
                     </div>
                   )}
+
+                  {/* Super Admin Sub-Admin Visibility Toggle on Direct Messages written by Super Admin */}
+                  {isSuperAdmin && isSuperAdminMsg && (() => {
+                    const canSubAdminSee = msg.sharedWithSubAdmin === true && !msg.hiddenFromSubAdmin;
+                    return (
+                      <div className="mt-2 pt-2 border-t border-white/25 flex items-center justify-between text-[11px] gap-2">
+                        <div className="flex items-center space-x-1.5 text-blue-50">
+                          {canSubAdminSee ? (
+                            <Eye className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                          ) : (
+                            <EyeOff className="w-3.5 h-3.5 text-blue-200 shrink-0" />
+                          )}
+                          <span className="font-bold text-[10px]">
+                            Sub Admin View: {canSubAdminSee ? 'ON' : 'OFF'}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleSubAdminAccess(msg, !canSubAdminSee)}
+                          className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-xs ${
+                            canSubAdminSee
+                              ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                              : 'bg-white/20 hover:bg-white/30 text-white border border-white/30'
+                          }`}
+                        >
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              canSubAdminSee ? 'bg-white' : 'bg-blue-200/80'
+                            }`}
+                          />
+                          <span>{canSubAdminSee ? 'ON — Turn OFF' : 'OFF — Turn ON'}</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   {/* Super Admin Sub-Admin Access Control on Customer Messages & Images */}
                   {isSuperAdmin && isCustomerMsg && (
@@ -825,21 +869,33 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
       {/* Input Area matching image_af72ee61.png */}
       <div className="p-3 bg-white border-t border-gray-200 space-y-2">
-        {/* Super Admin Direct Message Toggle */}
+        {/* Super Admin Direct Message & Sub Admin Visibility Switch */}
         {isSuperAdmin && (
-          <div className="px-3 py-1.5 bg-purple-50/70 border border-purple-200/80 rounded-xl flex items-center justify-between text-xs text-purple-900">
-            <label className="flex items-center space-x-2 cursor-pointer font-bold select-none text-[11px]">
-              <input
-                type="checkbox"
-                checked={superAdminDirectToCustomer}
-                onChange={(e) => setSuperAdminDirectToCustomer(e.target.checked)}
-                className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 cursor-pointer accent-purple-600"
-              />
-              <span className="flex items-center space-x-1.5 text-purple-950">
+          <div className="px-3 py-1.5 bg-purple-50/70 border border-purple-200/80 rounded-xl flex items-center justify-between gap-2 text-xs text-purple-900">
+            <span className="flex items-center space-x-1.5 font-bold text-[11px] text-purple-950">
+              {superAdminDirectToCustomer ? (
                 <Lock className="w-3.5 h-3.5 text-purple-700" />
-                <span>Direct Message to Customer</span>
-              </span>
-            </label>
+              ) : (
+                <Eye className="w-3.5 h-3.5 text-emerald-600" />
+              )}
+              <span>Direct Message to Customer</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setSuperAdminDirectToCustomer(!superAdminDirectToCustomer)}
+              className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs ${
+                !superAdminDirectToCustomer
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  : 'bg-purple-200/80 hover:bg-purple-300/80 text-purple-950'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  !superAdminDirectToCustomer ? 'bg-white' : 'bg-purple-600'
+                }`}
+              />
+              <span>Sub Admin View: {!superAdminDirectToCustomer ? 'ON' : 'OFF'}</span>
+            </button>
           </div>
         )}
 

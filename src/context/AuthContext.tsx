@@ -321,46 +321,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     markSessionActive();
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Check Super Admin login (supports updated custom password OR default admin12345)
+    // 1. Check Super Admin login (uses zara12345 or any newer custom password updated by Super Admin)
     if (cleanEmail === 'admin@gmail.com' || cleanEmail === 'ebukaesieme@gmail.com') {
       let superProfile = await getUserProfile('super_admin_seed');
       if (!superProfile && auth.currentUser) {
         superProfile = await getUserProfile(auth.currentUser.uid);
       }
-      const expectedPassword = superProfile?.customPassword || 'admin12345';
-      if (pass === expectedPassword || pass === 'admin12345') {
-        try {
-          await signInWithEmailAndPassword(auth, cleanEmail, pass);
-        } catch (fbErr: any) {
-          try {
-            await createUserWithEmailAndPassword(auth, cleanEmail, pass);
-          } catch (createErr) {
-            // Keep going with profile
-          }
-        }
-        if (!superProfile) {
-          superProfile = {
-            uid: 'super_admin_seed',
-            email: cleanEmail,
-            fullName: 'Executive Super Administrator',
-            role: 'super_admin',
-            phoneNumber: '+1 (800) 999-CARGO',
-            address: 'One World Cargo Center, JFK Airport',
-            city: 'New York',
-            country: 'United States',
-            postalCode: '11430',
-            isSuspended: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-          await createOrUpdateUserProfile(superProfile);
-        }
-        markSessionActive();
-        safeSetSession('iec_demo_uid', superProfile.uid);
-        safeSetSession('iec_demo_role', 'super_admin');
-        setUserProfile(superProfile);
-        return;
+      const savedCustomPass =
+        superProfile?.passwordVersion === 'zara_v1' && superProfile?.customPassword
+          ? superProfile.customPassword
+          : null;
+      const expectedPassword = savedCustomPass || 'zara12345';
+
+      if (pass !== expectedPassword) {
+        throw new Error('Invalid email or password. Please verify your credentials.');
       }
+
+      try {
+        await signInWithEmailAndPassword(auth, cleanEmail, pass);
+      } catch (fbErr: any) {
+        try {
+          await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+        } catch (createErr) {
+          // Keep going with profile
+        }
+      }
+      if (!superProfile) {
+        superProfile = {
+          uid: 'super_admin_seed',
+          email: cleanEmail,
+          fullName: 'Executive Super Administrator',
+          role: 'super_admin',
+          phoneNumber: '+1 (800) 999-CARGO',
+          address: 'One World Cargo Center, JFK Airport',
+          city: 'New York',
+          country: 'United States',
+          postalCode: '11430',
+          customPassword: expectedPassword,
+          passwordVersion: 'zara_v1',
+          isSuspended: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        await createOrUpdateUserProfile(superProfile);
+      } else if (superProfile.passwordVersion !== 'zara_v1' || superProfile.customPassword !== expectedPassword) {
+        superProfile = { ...superProfile, customPassword: expectedPassword, passwordVersion: 'zara_v1' };
+        await createOrUpdateUserProfile(superProfile);
+      }
+      markSessionActive();
+      safeSetSession('iec_demo_uid', superProfile.uid);
+      safeSetSession('iec_demo_role', 'super_admin');
+      setUserProfile(superProfile);
+      return;
     }
 
     // 2. Check all registered accounts in Firestore database (Sub Admins, Customers)

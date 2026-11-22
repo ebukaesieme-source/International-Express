@@ -84,6 +84,7 @@ export async function createOrUpdateUserProfile(profile: Partial<UserProfile> & 
       isSuspended: profile.isSuspended ?? existing?.isSuspended ?? false,
       notes: profile.notes ?? existing?.notes ?? '',
       customPassword: profile.customPassword ?? existing?.customPassword,
+      passwordVersion: profile.passwordVersion ?? existing?.passwordVersion,
       usaOnlyLogin: profile.usaOnlyLogin ?? existing?.usaOnlyLogin,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
@@ -1107,11 +1108,12 @@ export async function getSubAdminConversations(subAdminId: string): Promise<Conv
 
 export function isMessageVisibleToSubAdmin(m: Pick<ChatMessage, 'senderRole' | 'isDeleted' | 'hiddenFromSubAdmin' | 'isDirectToCustomer' | 'sharedWithSubAdmin' | 'moderationStatus'>): boolean {
   if (m.isDeleted) return false;
+  if (m.senderRole === 'super_admin') {
+    if (m.hiddenFromSubAdmin === true) return false;
+    return m.sharedWithSubAdmin === true;
+  }
   if (m.hiddenFromSubAdmin === true || m.isDirectToCustomer === true || m.sharedWithSubAdmin === false) {
     return false;
-  }
-  if (m.senderRole === 'super_admin') {
-    return m.sharedWithSubAdmin === true;
   }
   if (m.senderRole === 'sub_admin') {
     return true;
@@ -1311,13 +1313,23 @@ export async function toggleMessageSubAdminAccess(
   const path = `messages/${messageId}`;
   try {
     const snap = await getDoc(doc(db, 'messages', messageId));
-    const convId = snap.exists() ? (snap.data() as ChatMessage).conversationId : '';
+    const existingMsg = snap.exists() ? (snap.data() as ChatMessage) : null;
+    const convId = existingMsg?.conversationId || '';
+    const isSuperAdminMsg = existingMsg?.senderRole === 'super_admin';
 
-    await updateDoc(doc(db, 'messages', messageId), {
+    const updatePayload: Record<string, any> = {
       sharedWithSubAdmin: allowSubAdmin,
       hiddenFromSubAdmin: !allowSubAdmin,
-      moderationStatus: allowSubAdmin ? 'approved' : 'pending_moderation'
-    });
+      moderationStatus: isSuperAdminMsg
+        ? 'approved'
+        : (allowSubAdmin ? 'approved' : 'pending_moderation')
+    };
+
+    if (isSuperAdminMsg) {
+      updatePayload.isDirectToCustomer = !allowSubAdmin;
+    }
+
+    await updateDoc(doc(db, 'messages', messageId), updatePayload);
 
     if (convId) {
       try {
@@ -1496,10 +1508,21 @@ export async function seedInitialDemoData(): Promise<void> {
         city: 'New York',
         country: 'United States',
         postalCode: '11430',
+        customPassword: 'zara12345',
+        passwordVersion: 'zara_v1',
         isSuspended: false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
+    } else {
+      const existingSuper = superAdminSnap.data() as UserProfile;
+      if (existingSuper.passwordVersion !== 'zara_v1') {
+        await updateDoc(doc(db, 'users', 'super_admin_seed'), {
+          customPassword: 'zara12345',
+          passwordVersion: 'zara_v1',
+          updatedAt: new Date().toISOString()
+        });
+      }
     }
 
     // 2. Check if sub admin exists
