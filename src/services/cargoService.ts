@@ -11,7 +11,9 @@ import {
   orderBy,
   limit,
   addDoc,
-  onSnapshot
+  onSnapshot,
+  arrayUnion,
+  arrayRemove
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import {
@@ -113,20 +115,17 @@ export async function updateUserPassword(uid: string, newPassword: string): Prom
 
 export async function updateUserPresence(uid: string, isOnline: boolean): Promise<void> {
   if (!uid) return;
-  const path = `users/${uid}`;
   const now = new Date().toISOString();
   try {
+    // IMPORTANT: Never call setDoc here! If the account was deleted, updateDoc safely fails
+    // instead of resurrecting a deleted user document in Firestore.
     await updateDoc(doc(db, 'users', uid), {
       isOnline,
       lastSeen: now,
       updatedAt: now
     });
-  } catch (error) {
-    try {
-      await setDoc(doc(db, 'users', uid), { isOnline, lastSeen: now, updatedAt: now }, { merge: true });
-    } catch (e) {
-      // silent
-    }
+  } catch {
+    // Ignore when user document does not exist (e.g. deleted account)
   }
 }
 
@@ -155,13 +154,15 @@ export async function getAllUsers(): Promise<UserProfile[]> {
   const path = 'users';
   try {
     const snap = await getDocs(collection(db, 'users'));
-    return snap.docs.map(d => {
-      const u = d.data() as UserProfile;
-      if (u.assignedSubAdminName && (u.assignedSubAdminName.includes('Regional Dispatch Lead') || u.assignedSubAdminName.includes('Marcus Vance'))) {
-        u.assignedSubAdminName = 'Company Support';
-      }
-      return u;
-    });
+    return snap.docs
+      .map(d => {
+        const u = { ...(d.data() as UserProfile), uid: (d.data() as UserProfile).uid || d.id };
+        if (u.assignedSubAdminName && (u.assignedSubAdminName.includes('Regional Dispatch Lead') || u.assignedSubAdminName.includes('Marcus Vance'))) {
+          u.assignedSubAdminName = 'Company Support';
+        }
+        return u;
+      })
+      .filter(u => Boolean(u.role && (u.email || u.fullName)));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
   }
@@ -240,7 +241,9 @@ export async function getSubAdmins(): Promise<UserProfile[]> {
   const path = 'users';
   try {
     const snap = await getDocs(collection(db, 'users'));
-    const all = snap.docs.map(d => d.data() as UserProfile);
+    const all = snap.docs
+      .map(d => ({ ...(d.data() as UserProfile), uid: (d.data() as UserProfile).uid || d.id }))
+      .filter(u => Boolean(u.role && (u.email || u.fullName)));
     
     const seenEmails = new Set<string>();
     const subAdmins: UserProfile[] = [];
@@ -248,8 +251,9 @@ export async function getSubAdmins(): Promise<UserProfile[]> {
     for (const u of all) {
       if (u.role === 'sub_admin') {
         const email = (u.email || '').toLowerCase().trim();
-        if (!seenEmails.has(email)) {
-          seenEmails.add(email);
+        const dedupeKey = email || u.uid;
+        if (!seenEmails.has(dedupeKey)) {
+          seenEmails.add(dedupeKey);
           subAdmins.push(u);
         }
       }
@@ -279,13 +283,15 @@ export async function getCustomers(subAdminId?: string): Promise<UserProfile[]> 
       }
     });
 
-    const all = snap.docs.map(d => {
-      const u = d.data() as UserProfile;
-      if (u.assignedSubAdminName && (u.assignedSubAdminName.includes('Regional Dispatch Lead') || u.assignedSubAdminName.includes('Marcus Vance'))) {
-        u.assignedSubAdminName = 'Company Support';
-      }
-      return u;
-    });
+    const all = snap.docs
+      .map(d => {
+        const u = { ...(d.data() as UserProfile), uid: (d.data() as UserProfile).uid || d.id };
+        if (u.assignedSubAdminName && (u.assignedSubAdminName.includes('Regional Dispatch Lead') || u.assignedSubAdminName.includes('Marcus Vance'))) {
+          u.assignedSubAdminName = 'Company Support';
+        }
+        return u;
+      })
+      .filter(u => Boolean(u.role && (u.email || u.fullName)));
 
     // Exclude any document with role !== 'customer' OR email in adminEmails
     const customers = all.filter(u => 
@@ -434,10 +440,139 @@ export async function claimCustomer(
   }
 }
 
-export async function deleteUser(uid: string): Promise<void> {
+export async function getDeletedAccountRegistry(): Promise<{ uids: Set<string>; emails: Set<string> }> {
+  try {
+    const snap = await getDoc(doc(db, 'system_settings', 'deleted_accounts'));
+    if (!snap.exists()) {
+      return { uids: new Set(), emails: new Set() };
+    }
+    const data = snap.data() as { uids?: string[]; emails?: string[] };
+    return {
+      uids: new Set((data.uids || []).map(v => String(v).trim()).filter(Boolean)),
+      emails: new Set((data.emails || []).map(v => String(v).toLowerCase().trim()).filter(Boolean))
+    };
+  } catch {
+    return { uids: new Set(), emails: new Set() };
+  }
+}
+
+export async function isAccountDeleted(uid?: string, email?: string): Promise<boolean> {
+  const registry = await getDeletedAccountRegistry();
+  const cleanUid = (uid || '').trim();
+  const cleanEmail = (email || '').toLowerCase().trim();
+  if (cleanUid && registry.uids.has(cleanUid)) return true;
+  if (cleanEmail && registry.emails.has(cleanEmail)) return true;
+  return false;
+}
+
+export async function unmarkAccountDeleted(uid?: string, email?: string): Promise<void> {
+  try {
+    const updates: Record<string, any> = { updatedAt: new Date().toISOString() };
+    const cleanUid = (uid || '').trim();
+    const cleanEmail = (email || '').toLowerCase().trim();
+    if (cleanUid) updates.uids = arrayRemove(cleanUid);
+    if (cleanEmail) updates.emails = arrayRemove(cleanEmail);
+    if (cleanUid || cleanEmail) {
+      await setDoc(doc(db, 'system_settings', 'deleted_accounts'), updates, { merge: true });
+    }
+  } catch {
+    // silent
+  }
+}
+
+// Internal cleanup helper for UID migration or duplicate removal without blacklisting the account email
+export async function deleteUserDocOnly(uid: string): Promise<void> {
   const path = `users/${uid}`;
   try {
     await deleteDoc(doc(db, 'users', uid));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function deleteUser(uid: string, email?: string): Promise<void> {
+  const path = `users/${uid}`;
+  try {
+    let targetEmail = (email || '').toLowerCase().trim();
+    const matchedDocIds = new Set<string>([uid]);
+    const matchedUids = new Set<string>([uid]);
+
+    // 1. Inspect direct document first to capture email if caller didn't pass it
+    try {
+      const directSnap = await getDoc(doc(db, 'users', uid));
+      if (directSnap.exists()) {
+        const d = directSnap.data() as UserProfile;
+        if (!targetEmail && d.email) {
+          targetEmail = d.email.toLowerCase().trim();
+        }
+        if (d.uid) matchedUids.add(d.uid);
+      }
+    } catch {
+      // continue to full scan
+    }
+
+    // 2. Scan users collection for ALL duplicate documents matching either docId, uid field, or email
+    try {
+      const allSnap = await getDocs(collection(db, 'users'));
+      for (const userDoc of allSnap.docs) {
+        const data = userDoc.data() as UserProfile;
+        const docEmail = (data.email || '').toLowerCase().trim();
+        const isSameUid = userDoc.id === uid || data.uid === uid;
+        const isSameEmail = Boolean(targetEmail && docEmail && docEmail === targetEmail);
+        if (isSameUid || isSameEmail) {
+          matchedDocIds.add(userDoc.id);
+          if (data.uid) matchedUids.add(data.uid);
+          if (!targetEmail && docEmail) targetEmail = docEmail;
+        }
+      }
+    } catch (scanErr) {
+      console.warn('Duplicate user scan notice during deletion:', scanErr);
+    }
+
+    // 3. Delete every matching user document so hidden duplicates never resurface
+    await Promise.all(
+      Array.from(matchedDocIds).map(docId => deleteDoc(doc(db, 'users', docId)).catch(() => {}))
+    );
+
+    // 4. Record permanently deleted UIDs and email in deleted_accounts registry so seeding or cached auth never resurrects it
+    try {
+      const registryUpdate: Record<string, any> = {
+        updatedAt: new Date().toISOString()
+      };
+      const uidList = Array.from(matchedUids).filter(Boolean);
+      if (uidList.length > 0) {
+        registryUpdate.uids = arrayUnion(...uidList);
+      }
+      if (targetEmail) {
+        registryUpdate.emails = arrayUnion(targetEmail);
+      }
+      await setDoc(doc(db, 'system_settings', 'deleted_accounts'), registryUpdate, { merge: true });
+    } catch (regErr) {
+      console.warn('Deleted accounts registry update notice:', regErr);
+    }
+
+    // 5. Clean up orphaned conversations for deleted customer accounts
+    try {
+      const convSnap = await getDocs(collection(db, 'conversations'));
+      const convDeletes: Promise<void>[] = [];
+      for (const cDoc of convSnap.docs) {
+        const c = cDoc.data() as Conversation;
+        const cEmail = (c.customerEmail || '').toLowerCase().trim();
+        const matchesCustomer =
+          matchedUids.has(c.customerId) ||
+          matchedDocIds.has(c.customerId) ||
+          Array.from(matchedUids).some(id => cDoc.id === `conv_${id}`) ||
+          Boolean(targetEmail && cEmail && cEmail === targetEmail);
+        if (matchesCustomer) {
+          convDeletes.push(deleteDoc(doc(db, 'conversations', cDoc.id)).catch(() => {}));
+        }
+      }
+      if (convDeletes.length > 0) {
+        await Promise.all(convDeletes);
+      }
+    } catch (convErr) {
+      console.warn('Conversation cleanup notice during user deletion:', convErr);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -1685,140 +1820,84 @@ export async function seedInitialDemoData(): Promise<void> {
       }
     }
 
-    // 2. Check if sub admin exists
-    const subAdminSnap = await getDoc(doc(db, 'users', 'sub_admin_1'));
-    if (!subAdminSnap.exists()) {
-      await setDoc(doc(db, 'users', 'sub_admin_1'), {
-        uid: 'sub_admin_1',
-        email: 'subadmin@expresscargo.com',
-        fullName: 'Sub Admin Station',
-        role: 'sub_admin',
-        phoneNumber: '+44 20 7946 0991',
-        address: 'Heathrow Cargo Logistics Hub, Terminal 4',
-        city: 'London',
-        country: 'United Kingdom',
-        postalCode: 'TW6 3XZ',
-        isSuspended: false,
-        notes: 'Dispatch station authority for air and freight corridors.',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
+    // 1b. Check whether initial demo seeding already ran once OR accounts were deleted.
+    // Once initialized, NEVER re-create demo sub-admin or customer accounts that Super Admin deleted!
+    const generalSettingsSnap = await getDoc(doc(db, 'system_settings', 'general'));
+    const generalSettingsData = generalSettingsSnap.exists() ? (generalSettingsSnap.data() as Record<string, any>) : null;
+    const alreadyInitialized = Boolean(generalSettingsSnap.exists() || generalSettingsData?.initialSeedCompleted);
+
+    if (alreadyInitialized) {
+      if (!generalSettingsData?.initialSeedCompleted) {
+        await setDoc(
+          doc(db, 'system_settings', 'general'),
+          { initialSeedCompleted: true },
+          { merge: true }
+        ).catch(() => {});
+      }
+      return;
     }
 
-    // 3. Check sample customer
-    const customerSnap = await getDoc(doc(db, 'users', 'customer_demo_1'));
-    if (!customerSnap.exists()) {
-      await setDoc(doc(db, 'users', 'customer_demo_1'), {
-        uid: 'customer_demo_1',
-        email: 'customer@apexlogistics.com',
-        fullName: 'Elena Rostova (Apex Global Imports)',
-        role: 'customer',
-        phoneNumber: '+1 (415) 890-3344',
-        address: '888 Industrial Parkway, Suite 400',
-        city: 'San Francisco',
-        country: 'United States',
-        postalCode: '94107',
-        passportId: 'US-92848102',
-        assignedSubAdminId: 'sub_admin_1',
-        assignedSubAdminName: 'Sub Admin Station',
-        isSuspended: false,
-        isOnline: true,
-        lastSeen: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
+    const deletedRegistry = await getDeletedAccountRegistry();
+    const isSeedBlocked = (seedUid: string, seedEmail: string) =>
+      deletedRegistry.uids.has(seedUid) || deletedRegistry.emails.has(seedEmail.toLowerCase().trim());
+
+    // 2. First-time setup only: seed default sub admin if not deleted
+    if (!isSeedBlocked('sub_admin_1', 'subadmin@expresscargo.com')) {
+      const subAdminSnap = await getDoc(doc(db, 'users', 'sub_admin_1'));
+      if (!subAdminSnap.exists()) {
+        await setDoc(doc(db, 'users', 'sub_admin_1'), {
+          uid: 'sub_admin_1',
+          email: 'subadmin@expresscargo.com',
+          fullName: 'Sub Admin Station',
+          role: 'sub_admin',
+          phoneNumber: '+44 20 7946 0991',
+          address: 'Heathrow Cargo Logistics Hub, Terminal 4',
+          city: 'London',
+          country: 'United Kingdom',
+          postalCode: 'TW6 3XZ',
+          isSuspended: false,
+          notes: 'Dispatch station authority for air and freight corridors.',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
     }
 
-    // 3b. Sample newly registered unassigned customer waiting for Sub Admin to accept
-    const unassignedCustSnap = await getDoc(doc(db, 'users', 'customer_unassigned_demo'));
-    if (!unassignedCustSnap.exists()) {
-      await setDoc(doc(db, 'users', 'customer_unassigned_demo'), {
-        uid: 'customer_unassigned_demo',
-        email: 'david@nordiclogistics.com',
-        fullName: 'David Kim (Nordic Trading Co)',
-        role: 'customer',
-        phoneNumber: '+46 8 123 4567',
-        address: 'Hamngatan 15, Suite 300',
-        city: 'Stockholm',
-        country: 'Sweden',
-        postalCode: '111 47',
-        assignedSubAdminId: '',
-        assignedSubAdminName: 'Unassigned (Awaiting Sub Admin Acceptance)',
-        isSuspended: false,
-        isOnline: false,
-        lastSeen: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
-        createdAt: new Date(Date.now() - 3600 * 1000).toISOString(),
-        updatedAt: new Date(Date.now() - 3600 * 1000).toISOString()
-      });
+    // 3. First-time setup only: seed sample customer if not deleted
+    if (!isSeedBlocked('customer_demo_1', 'customer@apexlogistics.com')) {
+      const customerSnap = await getDoc(doc(db, 'users', 'customer_demo_1'));
+      if (!customerSnap.exists()) {
+        await setDoc(doc(db, 'users', 'customer_demo_1'), {
+          uid: 'customer_demo_1',
+          email: 'customer@apexlogistics.com',
+          fullName: 'Elena Rostova (Apex Global Imports)',
+          role: 'customer',
+          phoneNumber: '+1 (415) 890-3344',
+          address: '888 Industrial Parkway, Suite 400',
+          city: 'San Francisco',
+          country: 'United States',
+          postalCode: '94107',
+          passportId: 'US-92848102',
+          assignedSubAdminId: 'sub_admin_1',
+          assignedSubAdminName: 'Sub Admin Station',
+          isSuspended: false,
+          isOnline: true,
+          lastSeen: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
     }
 
-    // 3c. Customer debbieyates from live user channel (conv_DymxtSU8Yvea1NGNXP4ASDLVw9D3)
-    const debbieSnap = await getDoc(doc(db, 'users', 'debbieyates'));
-    const debbieLastSeen = new Date(Date.now() - 3 * 3600 * 1000).toISOString(); // 3 hours ago -> "Offline for 3 hours"
-    if (!debbieSnap.exists()) {
-      await setDoc(doc(db, 'users', 'debbieyates'), {
-        uid: 'debbieyates',
-        email: 'debbieyates@expresscargo.com',
-        fullName: 'debbieyates',
-        role: 'customer',
-        phoneNumber: '+1 (555) 782-9012',
-        address: '40 North 400 West',
-        city: 'Heber City',
-        country: 'United States',
-        postalCode: '84032',
-        assignedSubAdminId: 'sub_admin_1',
-        assignedSubAdminName: 'admin support',
-        isSuspended: false,
-        isOnline: false,
-        lastSeen: debbieLastSeen,
-        createdAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-    }
-
-    // Also support UID DymxtSU8Yvea1NGNXP4ASDLVw9D3 if Firebase generated that auth UID
-    const debbieUidSnap = await getDoc(doc(db, 'users', 'DymxtSU8Yvea1NGNXP4ASDLVw9D3'));
-    if (!debbieUidSnap.exists()) {
-      await setDoc(doc(db, 'users', 'DymxtSU8Yvea1NGNXP4ASDLVw9D3'), {
-        uid: 'DymxtSU8Yvea1NGNXP4ASDLVw9D3',
-        email: 'debbieyates@expresscargo.com',
-        fullName: 'debbieyates',
-        role: 'customer',
-        phoneNumber: '+1 (555) 782-9012',
-        address: '40 North 400 West',
-        city: 'Heber City',
-        country: 'United States',
-        postalCode: '84032',
-        assignedSubAdminId: 'sub_admin_1',
-        assignedSubAdminName: 'admin support',
-        isSuspended: false,
-        isOnline: false,
-        lastSeen: debbieLastSeen,
-        createdAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-    }
-
-    const debbieConvId = 'conv_DymxtSU8Yvea1NGNXP4ASDLVw9D3';
-    const debbieConvSnap = await getDoc(doc(db, 'conversations', debbieConvId));
-    if (!debbieConvSnap.exists()) {
-      await setDoc(doc(db, 'conversations', debbieConvId), {
-        id: debbieConvId,
-        customerId: 'DymxtSU8Yvea1NGNXP4ASDLVw9D3',
-        customerName: 'debbieyates',
-        customerEmail: 'debbieyates@expresscargo.com',
-        subAdminId: 'sub_admin_1',
-        subAdminName: 'admin support',
-        lastMessage: "Hello madam, we had some network downtime that's why. everything is in order, we are sorry for the network failure. i hope you understand our message previously.",
-        subAdminLastMessage: "Hello madam, we had some network downtime that's why. everything is in order, we are sorry for the network failure. i hope you understand our message previously.",
-        lastMessageTime: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-        unreadCustomerCount: 1,
-        unreadAdminCount: 0,
-        createdAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-    }
-
+    // Mark initial seed complete so deleted demo/seeded accounts NEVER reappear on future page loads
+    await setDoc(
+      doc(db, 'system_settings', 'general'),
+      {
+        ...DEFAULT_SYSTEM_SETTINGS,
+        initialSeedCompleted: true
+      },
+      { merge: true }
+    );
 
     // 4. Sample shipment with exact itemized fees matching live bill telemetry
     const sampleTracking = 'IEC-748920-EXP';

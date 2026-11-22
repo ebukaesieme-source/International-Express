@@ -26,7 +26,9 @@ import {
   getAllUsers,
   getSubAdmins,
   seedInitialDemoData,
-  deleteUser,
+  deleteUserDocOnly,
+  isAccountDeleted,
+  unmarkAccountDeleted,
   addAuditLog
 } from '../services/cargoService';
 
@@ -275,7 +277,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await enforceUsaAccessForProfile(profile, cleanEmail);
         await createOrUpdateUserProfile(profile);
         if (existingByEmail.uid !== user.uid) {
-          await deleteUser(existingByEmail.uid);
+          await deleteUserDocOnly(existingByEmail.uid);
         }
         markSessionActive();
         safeSetSession('iec_demo_uid', user.uid);
@@ -292,7 +294,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
           await enforceUsaAccessForProfile(profile, cleanEmail);
           await createOrUpdateUserProfile(profile);
+          if (existingByEmail.uid !== user.uid) {
+            await deleteUserDocOnly(existingByEmail.uid);
+          }
         } else {
+          // NEVER auto-recreate an account that Super Admin permanently deleted!
+          if (!isSuperAdminEmail && (await isAccountDeleted(user.uid, cleanEmail))) {
+            lastActivityMemoryRef.current = 0;
+            safeRemoveLocal(ACTIVITY_STORAGE_KEY);
+            safeRemoveSession('iec_demo_uid');
+            safeRemoveSession('iec_demo_role');
+            safeRemoveSession('iec_active_tab');
+            setUserProfile(null);
+            setCurrentUser(null);
+            try {
+              await signOut(auth);
+            } catch {}
+            throw new GeoAccessError('Invalid email or password. Please verify your credentials.');
+          }
+
           const isSubAdminEmail = cleanEmail.includes('subadmin') || cleanEmail.endsWith('@subadmin.com');
           profile = {
             uid: user.uid,
@@ -443,26 +463,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (err instanceof GeoAccessError) {
         throw err;
       }
-      // Check sub admin demo accounts or customers
+      // Check sub admin demo accounts or customers (only if NOT deleted by Super Admin)
       if (cleanEmail === 'subadmin@expresscargo.com' && pass === 'subadmin12345') {
-        let demoSub = await getUserProfile('sub_admin_1');
-        if (!demoSub || demoSub.fullName.includes('Marcus Vance')) {
-          demoSub = {
-            uid: 'sub_admin_1',
-            email: 'subadmin@expresscargo.com',
-            fullName: 'London Station Dispatch',
-            role: 'sub_admin',
-            phoneNumber: '+44 20 7946 0991',
-            address: 'Heathrow Cargo Logistics Hub, Terminal 4',
-            city: 'London',
-            country: 'United Kingdom',
-            postalCode: 'TW6 3XZ',
-            isSuspended: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-          await createOrUpdateUserProfile(demoSub);
+        if (await isAccountDeleted('sub_admin_1', cleanEmail)) {
+          throw new Error('Invalid email or password. Please verify your credentials.');
         }
+        const demoSub = await getUserProfile('sub_admin_1');
+        if (!demoSub) {
+          throw new Error('Invalid email or password. Please verify your credentials.');
+        }
+        await enforceUsaAccessForProfile(demoSub, cleanEmail);
         markSessionActive();
         safeSetSession('iec_demo_uid', 'sub_admin_1');
         safeSetSession('iec_demo_role', 'sub_admin');
@@ -471,27 +481,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (cleanEmail === 'customer@apexlogistics.com' && pass === 'customer12345') {
-        let demoCust = await getUserProfile('customer_demo_1');
-        if (!demoCust || (demoCust.assignedSubAdminName && demoCust.assignedSubAdminName.includes('Marcus Vance'))) {
-          demoCust = {
-            uid: 'customer_demo_1',
-            email: 'customer@apexlogistics.com',
-            fullName: 'Elena Rostova (Apex Global Imports)',
-            role: 'customer',
-            phoneNumber: '+1 (415) 890-3344',
-            address: '888 Industrial Parkway, Suite 400',
-            city: 'San Francisco',
-            country: 'United States',
-            postalCode: '94107',
-            passportId: 'US-92848102',
-            assignedSubAdminId: 'sub_admin_1',
-            assignedSubAdminName: 'Company Support',
-            isSuspended: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-          await createOrUpdateUserProfile(demoCust);
+        if (await isAccountDeleted('customer_demo_1', cleanEmail)) {
+          throw new Error('Invalid email or password. Please verify your credentials.');
         }
+        const demoCust = await getUserProfile('customer_demo_1');
+        if (!demoCust) {
+          throw new Error('Invalid email or password. Please verify your credentials.');
+        }
+        await enforceUsaAccessForProfile(demoCust, cleanEmail);
         markSessionActive();
         safeSetSession('iec_demo_uid', 'customer_demo_1');
         safeSetSession('iec_demo_role', 'customer');
@@ -564,7 +561,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updatedAt: new Date().toISOString(),
       };
 
-      // 2. Persist customer account record to Firestore "users" collection
+      // 2. Clear any prior deletion tombstone if this email is intentionally registering fresh, then persist to Firestore
+      await unmarkAccountDeleted(uid, cleanEmail);
       await createOrUpdateUserProfile(profile);
       markSessionActive();
       setUserProfile(profile);
@@ -612,50 +610,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         safeSetSession('iec_demo_role', 'super_admin');
         setUserProfile(profile);
       } else if (role === 'sub_admin') {
-        let profile = await getUserProfile('sub_admin_1');
-        if (!profile || profile.fullName.includes('Marcus Vance')) {
-          profile = {
-            uid: 'sub_admin_1',
-            email: 'subadmin@expresscargo.com',
-            fullName: 'London Station Dispatch',
-            role: 'sub_admin',
-            phoneNumber: '+44 20 7946 0991',
-            address: 'Heathrow Cargo Logistics Hub, Terminal 4',
-            city: 'London',
-            country: 'United Kingdom',
-            postalCode: 'TW6 3XZ',
-            isSuspended: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-          await createOrUpdateUserProfile(profile);
+        const subAdmins = await getSubAdmins();
+        const profile = subAdmins[0] || (await getUserProfile('sub_admin_1'));
+        if (!profile || (await isAccountDeleted(profile.uid, profile.email))) {
+          throw new Error('No active Sub Admin account is available.');
         }
-        safeSetSession('iec_demo_uid', 'sub_admin_1');
+        safeSetSession('iec_demo_uid', profile.uid);
         safeSetSession('iec_demo_role', 'sub_admin');
         setUserProfile(profile);
       } else {
-        let profile = await getUserProfile('customer_demo_1');
-        if (!profile || (profile.assignedSubAdminName && profile.assignedSubAdminName.includes('Marcus Vance'))) {
-          profile = {
-            uid: 'customer_demo_1',
-            email: 'customer@apexlogistics.com',
-            fullName: 'Elena Rostova (Apex Global Imports)',
-            role: 'customer',
-            phoneNumber: '+1 (415) 890-3344',
-            address: '888 Industrial Parkway, Suite 400',
-            city: 'San Francisco',
-            country: 'United States',
-            postalCode: '94107',
-            passportId: 'US-92848102',
-            assignedSubAdminId: 'sub_admin_1',
-            assignedSubAdminName: 'Company Support',
-            isSuspended: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-          await createOrUpdateUserProfile(profile);
+        const profile = await getUserProfile('customer_demo_1');
+        if (!profile || (await isAccountDeleted(profile.uid, profile.email))) {
+          throw new Error('This account is no longer active.');
         }
-        safeSetSession('iec_demo_uid', 'customer_demo_1');
+        safeSetSession('iec_demo_uid', profile.uid);
         safeSetSession('iec_demo_role', 'customer');
         setUserProfile(profile);
       }
@@ -801,7 +769,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let usaGeoVerifiedForUid = false;
 
     const unsubscribe = subscribeToUserProfile(uid, async (liveProfile) => {
-      if (cancelled || !liveProfile) return;
+      if (cancelled) return;
+
+      // 0. If this account was permanently deleted by Super Admin, immediately sign out on all devices
+      if (!liveProfile) {
+        if (userProfileRef.current?.role !== 'super_admin' && uid !== 'super_admin_seed') {
+          await logoutRef.current();
+        }
+        return;
+      }
 
       // 1. Immediately enforce account suspension on any open phone/tablet/PC
       if (liveProfile.role !== 'super_admin' && liveProfile.isSuspended === true) {

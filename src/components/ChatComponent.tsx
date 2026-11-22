@@ -357,9 +357,9 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-110px)] sm:h-[calc(100dvh-140px)] min-h-[420px] max-h-[90dvh] bg-slate-50 border border-gray-200 rounded-2xl overflow-hidden shadow-lg w-full">
-      {/* Chat Header - Compact Sleek Header matching reference design */}
-      <div className="bg-[#0b132b] text-white px-3 sm:px-5 py-2.5 sm:py-3 flex items-center justify-between border-b border-[#1c2541] gap-2">
+    <div className="flex flex-col h-[calc(100dvh-56px)] sm:h-[calc(100dvh-88px)] min-h-[420px] max-h-[94dvh] bg-slate-50 border border-gray-200 rounded-2xl overflow-hidden shadow-lg w-full">
+      {/* Chat Header - Compact Sleek Header */}
+      <div className="bg-[#0b132b] text-white px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between border-b border-[#1c2541] gap-2 shrink-0">
         <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
           <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-600 flex items-center justify-center font-black text-xs sm:text-sm shadow-inner text-white shrink-0">
             {isCustomer ? <Shield className="w-4 h-4 text-white" /> : conversation.customerName.charAt(0)}
@@ -427,12 +427,35 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
           </div>
         </div>
 
-        {/* Action Controls: Return icon and X close button */}
+        {/* Action Controls: Super Admin Compact Auto Toggle, Return icon and X close button */}
         <div className="flex items-center space-x-1.5 shrink-0">
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={handleToggleAutoOn}
+              className={`px-2 sm:px-2.5 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-wider flex items-center space-x-1 cursor-pointer transition-colors shadow-xs border shrink-0 ${
+                customerMessagesAutoOn
+                  ? 'bg-emerald-600/90 hover:bg-emerald-600 text-white border-emerald-400/50'
+                  : 'bg-amber-500/90 hover:bg-amber-500 text-slate-950 border-amber-300/60'
+              }`}
+              title={
+                customerMessagesAutoOn
+                  ? 'Customer text to Sub-Admin: AUTO ON (photos & receipts always wait for Super Admin). Click to turn OFF.'
+                  : 'Customer messages, photos & receipts wait for Super Admin access. Click to turn AUTO ON.'
+              }
+            >
+              {customerMessagesAutoOn ? (
+                <Eye className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <EyeOff className="w-3.5 h-3.5 shrink-0" />
+              )}
+              <span>Auto: {customerMessagesAutoOn ? 'ON' : 'OFF'}</span>
+            </button>
+          )}
           {(onReturn || onClose) && (
             <button
               onClick={onReturn || onClose}
-              className="px-2.5 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-white flex items-center space-x-1.5 cursor-pointer border border-blue-400/30 transition-all text-xs font-bold shadow-xs"
+              className="px-2 sm:px-2.5 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-white flex items-center space-x-1.5 cursor-pointer border border-blue-400/30 transition-all text-xs font-bold shadow-xs"
               title="Return to previous screen"
             >
               <ArrowLeft className="w-4 h-4 text-white" />
@@ -450,49 +473,6 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
           )}
         </div>
       </div>
-
-      {/* Super Admin Moderation Banner matching image_af72ee61.png */}
-      {isSuperAdmin && (
-        customerMessagesAutoOn ? (
-          <div className="bg-emerald-50 border-b border-emerald-200 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900 transition-colors">
-            <div className="flex items-center space-x-2 flex-wrap min-w-0">
-              <span className="font-extrabold tracking-wide uppercase text-emerald-800">
-                CUSTOMER MESSAGES TO SUB-ADMIN: AUTO ON —
-              </span>
-              <span className="text-emerald-700">
-                Text messages arrive automatically • Customer photos &amp; receipts always wait for Super Admin access
-              </span>
-            </div>
-            <button
-              onClick={handleToggleAutoOn}
-              className="px-3 py-1 rounded-full bg-red-600 hover:bg-red-700 text-white font-black text-[11px] uppercase tracking-wider flex items-center space-x-1.5 cursor-pointer transition-colors shadow-xs shrink-0"
-              title="Click to hold customer messages from Sub-Admin until you approve them"
-            >
-              <EyeOff className="w-3.5 h-3.5" />
-              <span>TURN OFF</span>
-            </button>
-          </div>
-        ) : (
-          <div className="bg-amber-50 border-b border-amber-200 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900 transition-colors">
-            <div className="flex items-center space-x-2 flex-wrap min-w-0">
-              <span className="font-extrabold tracking-wide uppercase text-amber-800">
-                CUSTOMER MESSAGES TO SUB-ADMIN: AUTO OFF —
-              </span>
-              <span className="text-amber-700">
-                Customer messages, photos &amp; receipts wait for Super Admin access before arriving at Sub-Admin dashboard
-              </span>
-            </div>
-            <button
-              onClick={handleToggleAutoOn}
-              className="px-3 py-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] uppercase tracking-wider flex items-center space-x-1.5 cursor-pointer transition-colors shadow-xs shrink-0"
-              title="Click to allow Sub-Admin to see customer text messages automatically"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>TURN ON</span>
-            </button>
-          </div>
-        )
-      )}
 
       {/* Messages Scroll Area */}
       <div className="flex-1 p-4 overflow-y-auto space-y-4">
@@ -885,38 +865,8 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
         </div>
       )}
 
-      {/* Input Area matching image_af72ee61.png */}
-      <div className="p-3 bg-white border-t border-gray-200 space-y-2">
-        {/* Super Admin Direct Message & Sub Admin Visibility Switch */}
-        {isSuperAdmin && (
-          <div className="px-3 py-1.5 bg-purple-50/70 border border-purple-200/80 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs text-purple-900">
-            <span className="flex items-center space-x-1.5 font-bold text-[11px] text-purple-950">
-              {superAdminDirectToCustomer ? (
-                <Lock className="w-3.5 h-3.5 text-purple-700" />
-              ) : (
-                <Eye className="w-3.5 h-3.5 text-emerald-600" />
-              )}
-              <span>Direct Message to Customer</span>
-            </span>
-            <button
-              type="button"
-              onClick={() => setSuperAdminDirectToCustomer(!superAdminDirectToCustomer)}
-              className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer shadow-2xs ${
-                !superAdminDirectToCustomer
-                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  : 'bg-purple-200/80 hover:bg-purple-300/80 text-purple-950'
-              }`}
-            >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  !superAdminDirectToCustomer ? 'bg-white' : 'bg-purple-600'
-                }`}
-              />
-              <span>Sub Admin View: {!superAdminDirectToCustomer ? 'ON' : 'OFF'}</span>
-            </button>
-          </div>
-        )}
-
+      {/* Input Area */}
+      <div className="p-2.5 sm:p-3 bg-white border-t border-gray-200 space-y-1.5 shrink-0">
         {/* Hidden File Input */}
         <input
           type="file"
@@ -926,7 +876,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
           accept="image/*,video/*,application/pdf"
         />
 
-        {/* Textarea Input matching image_af72ee61.png */}
+        {/* Textarea Input */}
         <textarea
           rows={2}
           value={inputText}
@@ -942,17 +892,17 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               ? "Type message to Company Support..."
               : "Type reply to customer (Shift+Enter for newline, Enter to send)..."
           }
-          className="w-full bg-slate-50 border border-gray-200 focus:border-blue-500 focus:bg-white rounded-xl p-3 text-xs text-gray-800 placeholder-gray-400 outline-none resize-none transition-all"
+          className="w-full bg-slate-50 border border-gray-200 focus:border-blue-500 focus:bg-white rounded-xl p-2.5 text-xs text-gray-800 placeholder-gray-400 outline-none resize-none transition-all"
         />
 
-        {/* Toolbar below textarea matching image_af72ee61.png */}
-        <div className="flex items-center justify-between">
+        {/* Toolbar below textarea */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center space-x-1">
             {/* Mic button */}
             <button
               type="button"
               onClick={() => alert('Voice note recording ready: speak into your microphone.')}
-              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
+              className="p-1.5 sm:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
               title="Record Voice Dispatch Note"
             >
               <Mic className="w-4 h-4" />
@@ -967,7 +917,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                   fileInputRef.current.click();
                 }
               }}
-              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
+              className="p-1.5 sm:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
               title="Attach Document / Waybill"
             >
               <Paperclip className="w-4 h-4" />
@@ -982,22 +932,45 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                   fileInputRef.current.click();
                 }
               }}
-              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
+              className="p-1.5 sm:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
               title="Attach Freight Photo"
             >
               <ImageIcon className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Send Button */}
-          <button
-            onClick={() => handleSendMessage()}
-            disabled={sending || (!inputText.trim() && !attachmentPreview)}
-            className="flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer"
-          >
-            <span>Send</span>
-            <Send className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center space-x-2">
+            {/* Compact Super Admin Direct Message Sub Admin View Switch */}
+            {isSuperAdmin && (
+              <button
+                type="button"
+                onClick={() => setSuperAdminDirectToCustomer(!superAdminDirectToCustomer)}
+                className={`inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer border ${
+                  !superAdminDirectToCustomer
+                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+                    : 'bg-purple-50 hover:bg-purple-100 text-purple-900 border-purple-200'
+                }`}
+                title="Toggle whether Sub Admin can see the message you are about to send"
+              >
+                {superAdminDirectToCustomer ? (
+                  <Lock className="w-3 h-3 text-purple-700 shrink-0" />
+                ) : (
+                  <Eye className="w-3 h-3 text-white shrink-0" />
+                )}
+                <span>Sub Admin View: {!superAdminDirectToCustomer ? 'ON' : 'OFF'}</span>
+              </button>
+            )}
+
+            {/* Send Button */}
+            <button
+              onClick={() => handleSendMessage()}
+              disabled={sending || (!inputText.trim() && !attachmentPreview)}
+              className="flex items-center space-x-1.5 px-4 py-1.5 sm:py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer"
+            >
+              <span>Send</span>
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 

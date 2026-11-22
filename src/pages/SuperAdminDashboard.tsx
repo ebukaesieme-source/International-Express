@@ -65,6 +65,8 @@ import {
   updateUserSuspension,
   transferCustomer,
   deleteUser,
+  deleteUserDocOnly,
+  unmarkAccountDeleted,
   getAllShipments,
   createShipment,
   updateShipment,
@@ -267,13 +269,16 @@ export const SuperAdminDashboard: React.FC = () => {
       const newUid = 'subadmin_' + Date.now();
       const initialPassword = subAdminForm.password.trim() || 'subadmin12345';
 
-      // 1. Delete any accidental customer records that have this same email
+      // 1. Delete any accidental customer records that have this same email (without blacklisting the email)
       const allUsers = await getAllUsers();
       for (const u of allUsers) {
         if (u.email && u.email.toLowerCase().trim() === cleanEmail && u.role === 'customer') {
-          await deleteUser(u.uid);
+          await deleteUserDocOnly(u.uid);
         }
       }
+
+      // Clear any previous deletion mark when Super Admin explicitly creates a new Sub Admin with this email
+      await unmarkAccountDeleted(newUid, cleanEmail);
 
       // 2. Create the real Sub Admin profile
       await createOrUpdateUserProfile({
@@ -467,15 +472,32 @@ export const SuperAdminDashboard: React.FC = () => {
     if (!userToDelete) return;
     setIsDeletingUser(true);
     try {
-      await deleteUser(userToDelete.uid);
+      const deletedEmail = (userToDelete.email || '').toLowerCase().trim();
+      await deleteUser(userToDelete.uid, deletedEmail);
       await addAuditLog(
         'account_deleted',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
         `Permanently deleted ${userToDelete.role} account for ${userToDelete.fullName} (${userToDelete.email})`
       );
-      setCustomers(prev => prev.filter(c => c.uid !== userToDelete.uid));
-      setSubAdmins(prev => prev.filter(s => s.uid !== userToDelete.uid));
+      setCustomers(prev =>
+        prev.filter(
+          c => c.uid !== userToDelete.uid && (!deletedEmail || (c.email || '').toLowerCase().trim() !== deletedEmail)
+        )
+      );
+      setSubAdmins(prev =>
+        prev.filter(
+          s => s.uid !== userToDelete.uid && (!deletedEmail || (s.email || '').toLowerCase().trim() !== deletedEmail)
+        )
+      );
+      setConversations(prev =>
+        prev.filter(
+          conv =>
+            conv.customerId !== userToDelete.uid &&
+            conv.id !== `conv_${userToDelete.uid}` &&
+            (!deletedEmail || (conv.customerEmail || '').toLowerCase().trim() !== deletedEmail)
+        )
+      );
       showToast(`Account for ${userToDelete.fullName} permanently deleted.`);
       setUserToDelete(null);
       loadAllData();
@@ -2421,8 +2443,8 @@ export const SuperAdminDashboard: React.FC = () => {
 
       {/* CHAT MODAL (SUPER ADMIN INTERVENTION) */}
       {activeChatConversation && userProfile && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="max-w-2xl w-full">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 z-50">
+          <div className="max-w-3xl w-full">
             <ChatComponent
               conversation={activeChatConversation}
               currentUserProfile={userProfile}
