@@ -19,6 +19,7 @@ import {
 } from '../utils/geoAccess';
 import {
   getUserProfile,
+  subscribeToUserProfile,
   createOrUpdateUserProfile,
   updateUserPassword,
   updateUserPresence,
@@ -133,10 +134,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     safeSetLocal(ACTIVITY_STORAGE_KEY, timestamp.toString());
   }, []);
 
+  const enforceAccountNotSuspended = useCallback(async (
+    profile: Partial<UserProfile> | null
+  ) => {
+    if (profile && profile.role !== 'super_admin' && profile.isSuspended === true) {
+      lastActivityMemoryRef.current = 0;
+      safeRemoveLocal(ACTIVITY_STORAGE_KEY);
+      safeRemoveSession('iec_demo_uid');
+      safeRemoveSession('iec_demo_role');
+      safeRemoveSession('iec_active_tab');
+      setUserProfile(null);
+      setCurrentUser(null);
+      try {
+        await signOut(auth);
+      } catch {}
+      throw new GeoAccessError('This account has been suspended. Please contact Company Support.');
+    }
+  }, []);
+
   const enforceUsaAccessForProfile = useCallback(async (
     profile: Partial<UserProfile> | null,
     fallbackEmail?: string
   ) => {
+    await enforceAccountNotSuspended(profile);
     if (!isUsaOnlyRestrictedAccount(profile, fallbackEmail)) {
       return;
     }
@@ -165,7 +185,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           'Invalid email or password. Please verify your credentials.'
       );
     }
-  }, []);
+  }, [enforceAccountNotSuspended]);
 
   // Initial seed and auth sync
   useEffect(() => {
@@ -769,6 +789,69 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       clearInterval(heartbeat);
       window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [userProfile?.uid]);
+
+  // Real-time enforcement of admin rules (suspension, USA-only login, role/assignment/profile updates) across all devices
+  useEffect(() => {
+    const uid = userProfile?.uid;
+    if (!uid) return;
+
+    let cancelled = false;
+    let usaGeoVerifiedForUid = false;
+
+    const unsubscribe = subscribeToUserProfile(uid, async (liveProfile) => {
+      if (cancelled || !liveProfile) return;
+
+      // 1. Immediately enforce account suspension on any open phone/tablet/PC
+      if (liveProfile.role !== 'super_admin' && liveProfile.isSuspended === true) {
+        await logoutRef.current();
+        return;
+      }
+
+      // 2. Enforce USA-only rule in real time if Super Admin enabled it while account was already signed in
+      if (isUsaOnlyRestrictedAccount(liveProfile)) {
+        if (!usaGeoVerifiedForUid) {
+          const geo = await verifyUserInUSA();
+          if (cancelled) return;
+          if (!geo.allowed) {
+            await logoutRef.current();
+            return;
+          }
+          usaGeoVerifiedForUid = true;
+        }
+      } else {
+        usaGeoVerifiedForUid = false;
+      }
+
+      // 3. Sync meaningful admin-updated fields into local session without re-rendering on presence heartbeats
+      const prev = userProfileRef.current;
+      if (!prev || prev.uid !== liveProfile.uid) return;
+
+      const hasRuleOrProfileChange =
+        prev.fullName !== liveProfile.fullName ||
+        prev.email !== liveProfile.email ||
+        prev.role !== liveProfile.role ||
+        prev.assignedSubAdminId !== liveProfile.assignedSubAdminId ||
+        prev.assignedSubAdminName !== liveProfile.assignedSubAdminName ||
+        prev.isSuspended !== liveProfile.isSuspended ||
+        prev.usaOnlyLogin !== liveProfile.usaOnlyLogin ||
+        prev.country !== liveProfile.country ||
+        prev.city !== liveProfile.city ||
+        prev.phoneNumber !== liveProfile.phoneNumber ||
+        prev.address !== liveProfile.address ||
+        prev.notes !== liveProfile.notes ||
+        prev.customPassword !== liveProfile.customPassword ||
+        prev.passwordVersion !== liveProfile.passwordVersion;
+
+      if (hasRuleOrProfileChange) {
+        setUserProfile((curr) => (curr && curr.uid === liveProfile.uid ? { ...curr, ...liveProfile } : curr));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
     };
   }, [userProfile?.uid]);
 

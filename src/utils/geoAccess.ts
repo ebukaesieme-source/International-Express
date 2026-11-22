@@ -41,7 +41,7 @@ export interface UsaGeoVerificationResult {
   reason?: string;
 }
 
-async function fetchJsonWithTimeout(url: string, timeoutMs = 4000): Promise<any | null> {
+async function fetchJsonWithTimeout(url: string, timeoutMs = 5500): Promise<any | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

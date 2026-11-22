@@ -29,7 +29,7 @@ import {
   editMessage,
   deleteMessage,
   toggleMessageSubAdminAccess,
-  getSystemSettings,
+  subscribeToSystemSettings,
   updateSystemSettings,
   addAuditLog,
   subscribeToUserProfile,
@@ -70,29 +70,32 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const customerMessagesAutoOnRef = useRef<boolean>(true);
 
   useEffect(() => {
-    // Check if auto-on is enabled in settings
-    getSystemSettings().then(settings => {
+    // Subscribe in real-time to system settings so moderation changes sync instantly across phones, tablets, and PCs
+    const unsubSettings = subscribeToSystemSettings((settings) => {
       if (settings) {
-        if (settings.customerMessagesToSubAdminAutoOn !== undefined) {
-          setCustomerMessagesAutoOn(settings.customerMessagesToSubAdminAutoOn);
-        } else {
-          setCustomerMessagesAutoOn(!settings.messageModeration);
-        }
+        const autoOn =
+          settings.customerMessagesToSubAdminAutoOn !== undefined
+            ? settings.customerMessagesToSubAdminAutoOn
+            : !settings.messageModeration;
+        customerMessagesAutoOnRef.current = autoOn;
+        setCustomerMessagesAutoOn(autoOn);
       }
     });
 
     // Mark conversation read for this role
     markConversationRead(conversation.id, currentUserProfile.role).catch(() => {});
 
-    // Subscribe to customer presence updates
+    // Subscribe to customer presence updates (with proper cleanup for fallback listener)
     const targetCustId = conversation.customerId || (conversation.id ? conversation.id.replace('conv_', '') : '');
+    let unsubFallbackPresence: (() => void) | null = null;
     const unsubPresence = subscribeToUserProfile(targetCustId, (profile) => {
       if (profile) {
         setCustomerPresenceProfile(profile);
-      } else if (conversation.customerName?.toLowerCase().includes('debbie')) {
-        subscribeToUserProfile('debbieyates', (debProfile) => {
+      } else if (conversation.customerName?.toLowerCase().includes('debbie') && !unsubFallbackPresence) {
+        unsubFallbackPresence = subscribeToUserProfile('debbieyates', (debProfile) => {
           if (debProfile) setCustomerPresenceProfile(debProfile);
         });
       }
@@ -108,10 +111,14 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
     );
 
     return () => {
+      unsubSettings();
       unsubscribe();
       unsubPresence();
+      if (unsubFallbackPresence) {
+        unsubFallbackPresence();
+      }
     };
-  }, [conversation.id, conversation.customerId, currentUserProfile.role]);
+  }, [conversation.id, conversation.customerId, conversation.customerName, currentUserProfile.role]);
 
 
   const scrollToBottom = () => {
@@ -176,7 +183,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
     // If Super Admin is sending: direct message to customer means Sub Admin will NOT see it
     const isDirectToCustomer = isSuperAdmin && superAdminDirectToCustomer;
     const hiddenFromSubAdmin = isDirectToCustomer;
-    const sharedWithSubAdmin = isCustomer ? customerMessagesAutoOn : !isDirectToCustomer;
+    const sharedWithSubAdmin = isCustomer ? customerMessagesAutoOnRef.current : !isDirectToCustomer;
     const moderationStatus = 'approved';
 
     try {
@@ -345,7 +352,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-[620px] sm:h-[calc(100vh-140px)] min-h-[560px] max-h-[88vh] bg-slate-50 border border-gray-200 rounded-2xl overflow-hidden shadow-lg w-full">
+    <div className="flex flex-col h-[calc(100dvh-110px)] sm:h-[calc(100dvh-140px)] min-h-[420px] max-h-[90dvh] bg-slate-50 border border-gray-200 rounded-2xl overflow-hidden shadow-lg w-full">
       {/* Chat Header - Compact Sleek Header matching reference design */}
       <div className="bg-[#0b132b] text-white px-3 sm:px-5 py-2.5 sm:py-3 flex items-center justify-between border-b border-[#1c2541] gap-2">
         <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
@@ -442,8 +449,8 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
       {/* Super Admin Moderation Banner matching image_af72ee61.png */}
       {isSuperAdmin && (
         customerMessagesAutoOn ? (
-          <div className="bg-emerald-50 border-b border-emerald-200 px-4 py-2.5 flex items-center justify-between text-xs text-emerald-900 transition-colors">
-            <div className="flex items-center space-x-2 flex-wrap">
+          <div className="bg-emerald-50 border-b border-emerald-200 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900 transition-colors">
+            <div className="flex items-center space-x-2 flex-wrap min-w-0">
               <span className="font-extrabold tracking-wide uppercase text-emerald-800">
                 CUSTOMER MESSAGES TO SUB-ADMIN: AUTO ON —
               </span>
@@ -453,7 +460,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             </div>
             <button
               onClick={handleToggleAutoOn}
-              className="px-3 py-1 rounded-full bg-red-600 hover:bg-red-700 text-white font-black text-[11px] uppercase tracking-wider flex items-center space-x-1.5 cursor-pointer transition-colors shadow-xs shrink-0 ml-2"
+              className="px-3 py-1 rounded-full bg-red-600 hover:bg-red-700 text-white font-black text-[11px] uppercase tracking-wider flex items-center space-x-1.5 cursor-pointer transition-colors shadow-xs shrink-0"
               title="Click to hold customer messages from Sub-Admin until you approve them"
             >
               <EyeOff className="w-3.5 h-3.5" />
@@ -461,8 +468,8 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             </button>
           </div>
         ) : (
-          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center justify-between text-xs text-amber-900 transition-colors">
-            <div className="flex items-center space-x-2 flex-wrap">
+          <div className="bg-amber-50 border-b border-amber-200 px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900 transition-colors">
+            <div className="flex items-center space-x-2 flex-wrap min-w-0">
               <span className="font-extrabold tracking-wide uppercase text-amber-800">
                 CUSTOMER MESSAGES TO SUB-ADMIN: AUTO OFF —
               </span>
@@ -472,7 +479,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             </div>
             <button
               onClick={handleToggleAutoOn}
-              className="px-3 py-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] uppercase tracking-wider flex items-center space-x-1.5 cursor-pointer transition-colors shadow-xs shrink-0 ml-2"
+              className="px-3 py-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] uppercase tracking-wider flex items-center space-x-1.5 cursor-pointer transition-colors shadow-xs shrink-0"
               title="Click to allow Sub-Admin to see customer messages automatically"
             >
               <Eye className="w-3.5 h-3.5" />
@@ -609,7 +616,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
                 {/* Bubble Container */}
                 <div
-                  className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-2.5 shadow-xs relative group ${
+                  className={`max-w-[92%] sm:max-w-[78%] rounded-2xl px-3.5 sm:px-4 py-2.5 shadow-xs relative group break-words ${
                     isMe
                       ? 'bg-blue-600 text-white rounded-tr-none self-end shadow-sm'
                       : 'bg-white border border-gray-200 text-gray-800 rounded-tl-none self-start shadow-xs'
@@ -732,7 +739,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                   {isSuperAdmin && isSuperAdminMsg && (() => {
                     const canSubAdminSee = msg.sharedWithSubAdmin === true && !msg.hiddenFromSubAdmin;
                     return (
-                      <div className="mt-2 pt-2 border-t border-white/25 flex items-center justify-between text-[11px] gap-2">
+                      <div className="mt-2 pt-2 border-t border-white/25 flex flex-wrap items-center justify-between text-[11px] gap-2">
                         <div className="flex items-center space-x-1.5 text-blue-50">
                           {canSubAdminSee ? (
                             <Eye className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
@@ -766,7 +773,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
                   {/* Super Admin Sub-Admin Access Control on Customer Messages & Images */}
                   {isSuperAdmin && isCustomerMsg && (
-                    <div className="mt-2 pt-2 border-t border-gray-200/60 flex items-center justify-between text-[11px] gap-2">
+                    <div className="mt-2 pt-2 border-t border-gray-200/60 flex flex-wrap items-center justify-between text-[11px] gap-2">
                       <div className="flex items-center space-x-1 text-gray-600">
                         <Lock className="w-3 h-3 text-gray-400" />
                         <Users className="w-3 h-3 text-gray-400" />
@@ -871,7 +878,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
       <div className="p-3 bg-white border-t border-gray-200 space-y-2">
         {/* Super Admin Direct Message & Sub Admin Visibility Switch */}
         {isSuperAdmin && (
-          <div className="px-3 py-1.5 bg-purple-50/70 border border-purple-200/80 rounded-xl flex items-center justify-between gap-2 text-xs text-purple-900">
+          <div className="px-3 py-1.5 bg-purple-50/70 border border-purple-200/80 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs text-purple-900">
             <span className="flex items-center space-x-1.5 font-bold text-[11px] text-purple-950">
               {superAdminDirectToCustomer ? (
                 <Lock className="w-3.5 h-3.5 text-purple-700" />
@@ -985,8 +992,8 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
       {/* Super Admin Message Edit Modal */}
       {editingMessage && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-gray-100">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4 border border-gray-100">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-extrabold text-gray-900 flex items-center space-x-2">
                 <Edit2 className="w-5 h-5 text-amber-500" />

@@ -76,6 +76,7 @@ import {
   editMessage,
   deleteMessage,
   getSystemSettings,
+  subscribeToSystemSettings,
   updateSystemSettings,
   getAuditLogs,
   addAuditLog,
@@ -189,6 +190,12 @@ export const SuperAdminDashboard: React.FC = () => {
 
   useEffect(() => {
     loadAllData();
+    const unsubSettings = subscribeToSystemSettings((liveSettings) => {
+      setSettings(liveSettings);
+    });
+    return () => {
+      unsubSettings();
+    };
   }, []);
 
   const loadAllData = async () => {
@@ -551,9 +558,13 @@ export const SuperAdminDashboard: React.FC = () => {
   const handleToggleModeration = async () => {
     if (!settings) return;
     const nextVal = !settings.messageModeration;
+    const nextAutoOn = !nextVal;
     try {
       await updateSystemSettings(
-        { messageModeration: nextVal },
+        {
+          messageModeration: nextVal,
+          customerMessagesToSubAdminAutoOn: nextAutoOn
+        },
         userProfile?.fullName || 'Super Admin'
       );
       await addAuditLog(
@@ -562,7 +573,11 @@ export const SuperAdminDashboard: React.FC = () => {
         'super_admin',
         `Super Admin turned Customer Message Moderation ${nextVal ? 'ON' : 'OFF'}`
       );
-      setSettings({ ...settings, messageModeration: nextVal });
+      setSettings({
+        ...settings,
+        messageModeration: nextVal,
+        customerMessagesToSubAdminAutoOn: nextAutoOn
+      });
     } catch (err) {
       console.error(err);
       alert('Failed to update moderation settings.');
@@ -714,7 +729,7 @@ export const SuperAdminDashboard: React.FC = () => {
         {/* Navigation Sidebar Drawer */}
         <aside
           className={`
-            fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white p-4 shadow-2xl flex flex-col transition-transform duration-200
+            fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white p-4 shadow-2xl flex flex-col overflow-y-auto transition-transform duration-200
             lg:static lg:z-auto lg:shadow-sm lg:rounded-3xl lg:border lg:border-gray-200 lg:transition-none lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto shrink-0
             ${sidebarOpen ? 'translate-x-0 flex' : '-translate-x-full hidden lg:hidden'}
           `}
@@ -2119,7 +2134,7 @@ export const SuperAdminDashboard: React.FC = () => {
 
               <div className="space-y-6 max-w-2xl">
                 {/* Moderation Switch */}
-                <div className="p-5 bg-slate-50 border border-gray-200 rounded-2xl flex items-center justify-between">
+                <div className="p-4 sm:p-5 bg-slate-50 border border-gray-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h4 className="font-bold text-sm text-gray-900">Message Moderation Protocol</h4>
                     <p className="text-xs text-gray-500 mt-0.5">
@@ -2128,7 +2143,7 @@ export const SuperAdminDashboard: React.FC = () => {
                   </div>
                   <button
                     onClick={handleToggleModeration}
-                    className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 self-start sm:self-auto ${
                       settings?.messageModeration
                         ? 'bg-amber-600 text-white shadow-md'
                         : 'bg-gray-200 text-gray-700'
@@ -2165,8 +2180,8 @@ export const SuperAdminDashboard: React.FC = () => {
 
       {/* CREATE SUB ADMIN MODAL */}
       {showCreateSubAdminModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100">
               <h3 className="font-black text-lg text-gray-900">Create New Sub Admin Account</h3>
               <button
@@ -2190,7 +2205,7 @@ export const SuperAdminDashboard: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">Login Email *</label>
                   <input
@@ -2215,7 +2230,7 @@ export const SuperAdminDashboard: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">Station City</label>
                   <input
@@ -2271,8 +2286,8 @@ export const SuperAdminDashboard: React.FC = () => {
 
       {/* TRANSFER CUSTOMER MODAL */}
       {showTransferModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50">
+          <div className="bg-white rounded-3xl max-w-md w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4">
             <h3 className="font-black text-lg text-gray-900">Transfer Customer Assignment</h3>
             <p className="text-xs text-gray-500">
               Reassign customer <strong className="text-gray-900">{showTransferModal.fullName}</strong> to another Sub Admin dispatcher.
@@ -2367,8 +2382,8 @@ export const SuperAdminDashboard: React.FC = () => {
 
       {/* QUICK SUPER ADMIN PASSWORD CHANGE & PROFILE EDIT MODAL */}
       {showAdminSecurityModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-gray-100 my-8 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-5 sm:p-6 shadow-2xl border border-gray-100 my-4 sm:my-8 max-h-[90dvh] overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-gray-100">
               <div className="flex items-center space-x-3">
                 <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-md shadow-amber-500/20">
@@ -2728,8 +2743,8 @@ export const SuperAdminDashboard: React.FC = () => {
 
       {/* DELETE USER CONFIRMATION MODAL */}
       {userToDelete && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100 space-y-4">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl border border-gray-100 space-y-4">
             <div className="flex items-center space-x-3 text-red-600">
               <div className="w-12 h-12 rounded-2xl bg-red-100 flex items-center justify-center shrink-0">
                 <Trash2 className="w-6 h-6 text-red-600" />

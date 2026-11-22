@@ -796,7 +796,7 @@ export const SubAdminDashboard: React.FC = () => {
       {/* Mobile Drawer Backdrop when sidebar is open on mobile */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-50 lg:hidden transition-opacity"
+          className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-40 lg:hidden transition-opacity"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -806,7 +806,7 @@ export const SubAdminDashboard: React.FC = () => {
         {/* SIDEBAR NAVIGATION: Off-canvas drawer on mobile, static on desktop */}
         <aside
           className={`
-            fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white p-4 shadow-2xl flex flex-col space-y-4 transition-transform duration-200
+            fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white p-4 shadow-2xl flex flex-col space-y-4 overflow-y-auto transition-transform duration-200
             lg:static lg:z-auto lg:shadow-xs lg:rounded-2xl lg:border lg:border-gray-200 lg:transition-none lg:w-64 lg:h-fit shrink-0
             ${sidebarOpen ? 'translate-x-0 flex' : '-translate-x-full hidden lg:hidden'}
           `}
@@ -2752,8 +2752,8 @@ export const SubAdminDashboard: React.FC = () => {
 
       {/* EDIT SHIPMENT MODAL */}
       {editingShipment && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90dvh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100">
               <h3 className="text-base font-black text-gray-900">
                 Edit Consignment: {editingShipment.trackingNumber}
@@ -3203,8 +3203,8 @@ export const SubAdminDashboard: React.FC = () => {
 
       {/* CONFIRM DELETE MODAL */}
       {shipmentToDelete && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4">
             <div className="flex items-center space-x-3 text-red-600">
               <AlertTriangle className="w-6 h-6" />
               <h3 className="text-base font-black">Confirm Deletion</h3>

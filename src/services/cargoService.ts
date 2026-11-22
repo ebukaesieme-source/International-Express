@@ -98,10 +98,14 @@ export async function createOrUpdateUserProfile(profile: Partial<UserProfile> & 
 export async function updateUserPassword(uid: string, newPassword: string): Promise<void> {
   const path = `users/${uid}`;
   try {
-    await updateDoc(doc(db, 'users', uid), {
+    const payload: Record<string, any> = {
       customPassword: newPassword,
       updatedAt: new Date().toISOString()
-    });
+    };
+    if (uid === 'super_admin_seed') {
+      payload.passwordVersion = 'zara_v1';
+    }
+    await setDoc(doc(db, 'users', uid), payload, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -301,10 +305,14 @@ export async function getCustomers(subAdminId?: string): Promise<UserProfile[]> 
 export async function updateUserSuspension(uid: string, isSuspended: boolean): Promise<void> {
   const path = `users/${uid}`;
   try {
-    await updateDoc(doc(db, 'users', uid), {
-      isSuspended,
-      updatedAt: new Date().toISOString()
-    });
+    await setDoc(
+      doc(db, 'users', uid),
+      {
+        isSuspended,
+        updatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -1415,39 +1423,111 @@ export async function deleteMessage(messageId: string, deletedBy: string): Promi
 
 /* ---------------- SYSTEM SETTINGS & AUDIT LOGS ---------------- */
 
+const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
+  id: 'general',
+  messageModeration: false,
+  customerMessagesToSubAdminAutoOn: true,
+  companyName: 'International Express Cargo',
+  supportEmail: 'support@internationalexpresscargo.com',
+  supportPhone: '+1 (800) 555-CARGO',
+  announcement: 'Worldwide air and sea cargo services operational 24/7 across 220+ global hub destinations.',
+  updatedAt: new Date().toISOString(),
+  updatedBy: 'System'
+};
+
+function normalizeSystemSettings(raw?: Partial<SystemSettings> | null): SystemSettings {
+  const base = { ...DEFAULT_SYSTEM_SETTINGS, ...(raw || {}), id: 'general' };
+  let messageModeration: boolean;
+  let customerMessagesToSubAdminAutoOn: boolean;
+
+  if (typeof raw?.messageModeration === 'boolean' && typeof raw?.customerMessagesToSubAdminAutoOn === 'boolean') {
+    // Keep both flags consistent; if legacy docs ever diverged, respect messageModeration as authoritative moderation switch
+    messageModeration = raw.messageModeration;
+    customerMessagesToSubAdminAutoOn = !raw.messageModeration;
+  } else if (typeof raw?.customerMessagesToSubAdminAutoOn === 'boolean') {
+    customerMessagesToSubAdminAutoOn = raw.customerMessagesToSubAdminAutoOn;
+    messageModeration = !raw.customerMessagesToSubAdminAutoOn;
+  } else if (typeof raw?.messageModeration === 'boolean') {
+    messageModeration = raw.messageModeration;
+    customerMessagesToSubAdminAutoOn = !raw.messageModeration;
+  } else {
+    messageModeration = false;
+    customerMessagesToSubAdminAutoOn = true;
+  }
+
+  return {
+    ...base,
+    messageModeration,
+    customerMessagesToSubAdminAutoOn
+  };
+}
+
 export async function getSystemSettings(): Promise<SystemSettings> {
   const path = 'system_settings/general';
   try {
     const snap = await getDoc(doc(db, 'system_settings', 'general'));
     if (snap.exists()) {
-      return snap.data() as SystemSettings;
+      return normalizeSystemSettings(snap.data() as Partial<SystemSettings>);
     }
-    const defaultSettings: SystemSettings = {
-      id: 'general',
-      messageModeration: false,
-      customerMessagesToSubAdminAutoOn: true,
-      companyName: 'International Express Cargo',
-      supportEmail: 'support@internationalexpresscargo.com',
-      supportPhone: '+1 (800) 555-CARGO',
-      announcement: 'Worldwide air and sea cargo services operational 24/7 across 220+ global hub destinations.',
-      updatedAt: new Date().toISOString(),
-      updatedBy: 'System'
-    };
-    await setDoc(doc(db, 'system_settings', 'general'), defaultSettings);
+    const defaultSettings = normalizeSystemSettings();
+    await setDoc(doc(db, 'system_settings', 'general'), defaultSettings, { merge: true });
     return defaultSettings;
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, path);
   }
 }
 
+export function subscribeToSystemSettings(callback: (settings: SystemSettings) => void) {
+  return onSnapshot(
+    doc(db, 'system_settings', 'general'),
+    (snap) => {
+      if (snap.exists()) {
+        callback(normalizeSystemSettings(snap.data() as Partial<SystemSettings>));
+      } else {
+        const defaults = normalizeSystemSettings();
+        setDoc(doc(db, 'system_settings', 'general'), defaults, { merge: true }).catch(() => {});
+        callback(defaults);
+      }
+    },
+    (err) => {
+      console.warn('subscribeToSystemSettings notice:', err);
+    }
+  );
+}
+
 export async function updateSystemSettings(updates: Partial<SystemSettings>, updatedBy: string): Promise<void> {
   const path = 'system_settings/general';
   try {
-    await updateDoc(doc(db, 'system_settings', 'general'), {
-      ...updates,
-      updatedAt: new Date().toISOString(),
-      updatedBy
-    });
+    const normalizedUpdates: Partial<SystemSettings> = { ...updates };
+
+    // Always keep messageModeration and customerMessagesToSubAdminAutoOn mutually synchronized across all devices
+    if (
+      typeof updates.messageModeration === 'boolean' &&
+      updates.customerMessagesToSubAdminAutoOn === undefined
+    ) {
+      normalizedUpdates.customerMessagesToSubAdminAutoOn = !updates.messageModeration;
+    } else if (
+      typeof updates.customerMessagesToSubAdminAutoOn === 'boolean' &&
+      updates.messageModeration === undefined
+    ) {
+      normalizedUpdates.messageModeration = !updates.customerMessagesToSubAdminAutoOn;
+    } else if (
+      typeof updates.messageModeration === 'boolean' &&
+      typeof updates.customerMessagesToSubAdminAutoOn === 'boolean'
+    ) {
+      normalizedUpdates.customerMessagesToSubAdminAutoOn = !updates.messageModeration;
+    }
+
+    await setDoc(
+      doc(db, 'system_settings', 'general'),
+      cleanFirestoreData({
+        id: 'general',
+        ...normalizedUpdates,
+        updatedAt: new Date().toISOString(),
+        updatedBy
+      }),
+      { merge: true }
+    );
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }

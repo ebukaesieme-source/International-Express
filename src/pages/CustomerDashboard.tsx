@@ -43,6 +43,7 @@ import {
   getOrCreateConversation,
   getShipmentPayments,
   getSystemSettings,
+  subscribeToSystemSettings,
   recordPayment,
   markConversationRead
 } from '../services/cargoService';
@@ -93,9 +94,15 @@ export const CustomerDashboard: React.FC = () => {
       (err) => console.warn('Conversation snapshot error:', err)
     );
 
+    // Subscribe in real-time to system settings (announcements, moderation state) across all devices
+    const unsubSettings = subscribeToSystemSettings((liveSettings) => {
+      setSettings(liveSettings);
+    });
+
     return () => {
       unsubShipments();
       unsubConv();
+      unsubSettings();
     };
   }, [customerId, userProfile?.assignedSubAdminId]);
 
@@ -280,7 +287,7 @@ export const CustomerDashboard: React.FC = () => {
         {/* Navigation Sidebar Drawer */}
         <aside
           className={`
-            fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white p-4 shadow-2xl flex flex-col transition-transform duration-200
+            fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white p-4 shadow-2xl flex flex-col overflow-y-auto transition-transform duration-200
             lg:static lg:z-auto lg:shadow-sm lg:rounded-3xl lg:border lg:border-gray-200 lg:transition-none lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto shrink-0
             ${sidebarOpen ? 'translate-x-0 flex' : '-translate-x-full hidden lg:hidden'}
           `}
@@ -825,8 +832,8 @@ export const CustomerDashboard: React.FC = () => {
 
       {/* PAY DUTY MODAL */}
       {payingShipment && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50">
+          <div className="bg-white rounded-3xl max-w-md w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4">
             <h3 className="font-black text-lg text-gray-900">Customs Duty Electronic Settlement</h3>
             <p className="text-xs text-gray-500">
               Settle border tariffs for Waybill <strong className="font-mono text-gray-900">{payingShipment.trackingNumber}</strong>.
