@@ -72,6 +72,7 @@ import {
   getAllConversations,
   getOrCreateConversation,
   getPendingModerationMessages,
+  subscribeToPendingModerationMessages,
   moderateMessage,
   editMessage,
   deleteMessage,
@@ -193,8 +194,12 @@ export const SuperAdminDashboard: React.FC = () => {
     const unsubSettings = subscribeToSystemSettings((liveSettings) => {
       setSettings(liveSettings);
     });
+    const unsubPending = subscribeToPendingModerationMessages((livePending) => {
+      setPendingMessages(livePending);
+    });
     return () => {
       unsubSettings();
+      unsubPending();
     };
   }, []);
 
@@ -518,39 +523,38 @@ export const SuperAdminDashboard: React.FC = () => {
     }
   };
 
-  // Moderation Approve / Reject
+  // Moderation Approve / Reject (Give Access to Sub Admin)
   const handleApproveMessage = async (msg: ChatMessage) => {
     try {
-      await moderateMessage(msg.id, 'approved', msg.conversationId, msg.text);
+      const summaryText =
+        msg.text || (msg.attachmentType ? `[${msg.attachmentType.toUpperCase()}] ${msg.attachmentName || 'Photo / Receipt'}` : 'Photo / Receipt');
+      await moderateMessage(msg.id, 'approved', msg.conversationId, summaryText);
       await addAuditLog(
         'message_approved',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
-        `Approved customer message ID ${msg.id} from ${msg.senderName}. Delivered to Sub Admin.`
+        `Super Admin granted Sub-Admin access to customer ${msg.attachmentUrl ? 'photo/receipt' : 'message'} ID ${msg.id} from ${msg.senderName}.`
       );
-      loadAllData();
+      showToast(`Access granted! Delivered to Sub-Admin dashboard.`);
     } catch (err) {
       console.error(err);
-      alert('Failed to approve message.');
+      showToast('Failed to grant Sub-Admin access.', 'error');
     }
   };
 
   const handleRejectMessage = async (msg: ChatMessage) => {
-    const reason = prompt('Enter rejection reason for customer notification:', 'Policy violation: Unverified freight request');
-    if (reason === null) return;
-
     try {
-      await moderateMessage(msg.id, 'rejected', msg.conversationId, msg.text, reason);
+      await moderateMessage(msg.id, 'rejected', msg.conversationId, msg.text || '', 'Held by Super Admin');
       await addAuditLog(
         'message_rejected',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
-        `Rejected customer message ID ${msg.id} from ${msg.senderName}. Reason: ${reason}`
+        `Rejected customer ${msg.attachmentUrl ? 'photo/receipt' : 'message'} ID ${msg.id} from ${msg.senderName}.`
       );
-      loadAllData();
+      showToast('Blocked from Sub-Admin dashboard.');
     } catch (err) {
       console.error(err);
-      alert('Failed to reject message.');
+      showToast('Failed to block message.', 'error');
     }
   };
 
@@ -1572,21 +1576,21 @@ export const SuperAdminDashboard: React.FC = () => {
             </div>
           )}
 
-          {/* SECTION 5: MESSAGE MODERATION QUEUE */}
+          {/* SECTION 5: MESSAGE & PHOTO/RECEIPT ACCESS QUEUE */}
           {activeSection === 'moderation' && (
-            <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-6 animate-fadeIn">
-              <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-6 shadow-xs space-y-6 animate-fadeIn">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-gray-100">
                 <div>
                   <h2 className="text-lg font-black text-gray-900 flex items-center space-x-2">
                     <Shield className="w-5 h-5 text-amber-500" />
-                    <span>Customer Message Moderation Queue</span>
+                    <span>Photo, Receipt &amp; Message Access Queue</span>
                   </h2>
                   <p className="text-xs text-gray-500">
-                    Review and verify customer messages prior to delivery to their assigned Sub Admin dispatcher.
+                    Customer photos, payment receipts, and held messages wait here until Super Admin grants access to arrive at the Sub-Admin dashboard.
                   </p>
                 </div>
-                <div className="text-xs font-bold text-gray-600">
-                  {pendingMessages.length} Pending Review
+                <div className="text-xs font-bold px-3 py-1 rounded-full bg-amber-100 text-amber-800">
+                  {pendingMessages.length} Awaiting Access
                 </div>
               </div>
 
@@ -1597,54 +1601,103 @@ export const SuperAdminDashboard: React.FC = () => {
                   </div>
                   <h4 className="font-bold text-sm text-gray-800">Queue is Clear</h4>
                   <p className="text-xs text-gray-500">
-                    All customer messages have been approved and delivered.
+                    No customer photos, receipts, or messages are currently waiting for Sub-Admin access.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {pendingMessages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className="p-4 bg-slate-50 border border-amber-200/80 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
-                    >
-                      <div className="space-y-1.5 flex-1">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold text-sm text-gray-900">{msg.senderName}</span>
-                          <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                            Customer
-                          </span>
-                          <span className="text-xs text-gray-400 font-mono">
-                            {new Date(msg.createdAt).toLocaleString()}
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-800 bg-white p-3 rounded-xl border border-gray-200">
-                          {msg.text}
-                        </p>
-                        {msg.attachmentUrl && (
-                          <div className="text-xs text-blue-600 font-medium">
-                            Attachment: {msg.attachmentType} ({msg.attachmentName || 'Media File'})
+                  {pendingMessages.map((msg) => {
+                    const matchedConv = conversations.find(c => c.id === msg.conversationId);
+                    return (
+                      <div
+                        key={msg.id}
+                        className="p-4 bg-slate-50 border border-amber-200/80 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
+                      >
+                        <div className="space-y-2 flex-1 min-w-0 w-full">
+                          <div className="flex items-center flex-wrap gap-2">
+                            <span className="font-bold text-sm text-gray-900">{msg.senderName}</span>
+                            <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                              Customer
+                            </span>
+                            {msg.attachmentUrl && (
+                              <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
+                                {msg.attachmentType === 'image' ? 'Photo / Receipt' : msg.attachmentType === 'document' ? 'Receipt / Document' : 'Media Attachment'}
+                              </span>
+                            )}
+                            <span className="text-xs text-gray-400 font-mono">
+                              {new Date(msg.createdAt).toLocaleString()}
+                            </span>
                           </div>
-                        )}
-                      </div>
 
-                      <div className="flex items-center space-x-2 self-end md:self-center">
-                        <button
-                          onClick={() => handleApproveMessage(msg)}
-                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer"
-                        >
-                          <Check className="w-4 h-4" />
-                          <span>Approve & Deliver</span>
-                        </button>
-                        <button
-                          onClick={() => handleRejectMessage(msg)}
-                          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer"
-                        >
-                          <X className="w-4 h-4" />
-                          <span>Reject</span>
-                        </button>
+                          {msg.text && (
+                            <p className="text-xs text-gray-800 bg-white p-3 rounded-xl border border-gray-200 whitespace-pre-wrap break-words">
+                              {msg.text}
+                            </p>
+                          )}
+
+                          {msg.attachmentUrl && (
+                            <div className="bg-white p-2.5 rounded-xl border border-gray-200 space-y-2">
+                              {msg.attachmentType === 'image' && (
+                                <img
+                                  src={msg.attachmentUrl}
+                                  alt={msg.attachmentName || 'Customer uploaded photo or receipt'}
+                                  className="max-h-56 rounded-lg object-contain border border-gray-100"
+                                />
+                              )}
+                              {msg.attachmentType === 'video' && (
+                                <video
+                                  src={msg.attachmentUrl}
+                                  controls
+                                  className="max-h-56 rounded-lg bg-black"
+                                />
+                              )}
+                              {msg.attachmentType === 'document' && (
+                                <a
+                                  href={msg.attachmentUrl}
+                                  download={msg.attachmentName || 'customer_receipt.pdf'}
+                                  className="inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold hover:bg-blue-100"
+                                >
+                                  <FileText className="w-4 h-4 shrink-0" />
+                                  <span className="truncate">{msg.attachmentName || 'View / Download Receipt Document'}</span>
+                                </a>
+                              )}
+                              <div className="text-[11px] text-gray-500 font-medium truncate">
+                                File: {msg.attachmentName || 'Uploaded Media'}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 self-stretch md:self-center shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleApproveMessage(msg)}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer"
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>Give Access to Sub-Admin</span>
+                          </button>
+                          {matchedConv && (
+                            <button
+                              type="button"
+                              onClick={() => setActiveChatConversation(matchedConv)}
+                              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                            >
+                              Open Chat
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleRejectMessage(msg)}
+                            className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer"
+                          >
+                            <X className="w-4 h-4" />
+                            <span>Block</span>
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

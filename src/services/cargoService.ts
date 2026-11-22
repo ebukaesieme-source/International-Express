@@ -1126,26 +1126,46 @@ export function isMessageVisibleToSubAdmin(m: Pick<ChatMessage, 'senderRole' | '
   if (m.senderRole === 'sub_admin') {
     return true;
   }
-  return m.sharedWithSubAdmin === true && m.moderationStatus !== 'rejected';
+  return (
+    m.sharedWithSubAdmin === true &&
+    m.moderationStatus !== 'rejected' &&
+    m.moderationStatus !== 'pending_moderation'
+  );
 }
 
 export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): Promise<string> {
   const path = 'messages';
   try {
     const now = new Date().toISOString();
+    const isCustomer = msg.senderRole === 'customer';
+    const hasAttachment = Boolean(msg.attachmentUrl || msg.attachmentType);
+
+    // Rule: Whenever a customer sends a photo, image, video, document, or receipt,
+    // ALWAYS hold it for Super Admin access approval before it arrives at Sub Admin dashboard.
+    const normalizedMsg: Omit<ChatMessage, 'id' | 'createdAt'> =
+      isCustomer && hasAttachment
+        ? {
+            ...msg,
+            sharedWithSubAdmin: false,
+            hiddenFromSubAdmin: true,
+            moderationStatus: 'pending_moderation'
+          }
+        : msg;
+
     const dataToSave = cleanFirestoreData({
-      ...msg,
+      ...normalizedMsg,
       createdAt: now
     });
     const docRef = await addDoc(collection(db, 'messages'), dataToSave);
 
     // Update conversation last message and unread counts
-    if (msg.moderationStatus === 'approved') {
-      const msgSummary = msg.text || (msg.attachmentType ? `[${msg.attachmentType.toUpperCase()}]` : 'Sent attachment');
-      const isCustomer = msg.senderRole === 'customer';
-      const visibleToSubAdmin = isMessageVisibleToSubAdmin(msg);
+    if (normalizedMsg.moderationStatus !== 'rejected') {
+      const msgSummary =
+        normalizedMsg.text ||
+        (normalizedMsg.attachmentType ? `[${normalizedMsg.attachmentType.toUpperCase()}]` : 'Sent attachment');
+      const visibleToSubAdmin = isMessageVisibleToSubAdmin(normalizedMsg);
 
-      const convRef = doc(db, 'conversations', msg.conversationId);
+      const convRef = doc(db, 'conversations', normalizedMsg.conversationId);
       const convSnap = await getDoc(convRef);
       let curUnreadCust = 0;
       let curUnreadAdmin = 0;
@@ -1155,7 +1175,7 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
         curUnreadAdmin = cData.unreadAdminCount || 0;
       }
 
-      // If Super Admin sends direct to customer (or message is hidden from Sub-Admin):
+      // If Super Admin sends direct to customer, or customer photo/receipt is awaiting Super Admin access:
       // - Do NOT update subAdminLastMessage (sub admin won't see preview)
       // - Do NOT increment unreadAdminCount (sub admin won't see unread badge)
       const updateData: Record<string, any> = {
@@ -1237,11 +1257,30 @@ export async function getPendingModerationMessages(): Promise<ChatMessage[]> {
   try {
     const q = query(collection(db, 'messages'), where('moderationStatus', '==', 'pending_moderation'));
     const snap = await getDocs(q);
-    const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() } as ChatMessage));
+    const msgs = snap.docs
+      .map(d => ({ id: d.id, ...d.data() } as ChatMessage))
+      .filter(m => !m.isDeleted);
     return msgs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
   }
+}
+
+export function subscribeToPendingModerationMessages(callback: (messages: ChatMessage[]) => void) {
+  const q = query(collection(db, 'messages'), where('moderationStatus', '==', 'pending_moderation'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const msgs = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() } as ChatMessage))
+        .filter(m => !m.isDeleted)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(msgs);
+    },
+    (err) => {
+      console.warn('subscribeToPendingModerationMessages notice:', err);
+    }
+  );
 }
 
 export async function moderateMessage(
@@ -1254,17 +1293,47 @@ export async function moderateMessage(
   const path = `messages/${messageId}`;
   try {
     const now = new Date().toISOString();
+    const isApproved = status === 'approved';
     await updateDoc(doc(db, 'messages', messageId), {
       moderationStatus: status,
+      sharedWithSubAdmin: isApproved,
+      hiddenFromSubAdmin: !isApproved,
       rejectionReason: reason || ''
     });
 
-    if (status === 'approved') {
-      await updateDoc(doc(db, 'conversations', conversationId), {
-        lastMessage: messageText || 'New message approved',
-        lastMessageTime: now,
-        updatedAt: now
-      });
+    if (conversationId) {
+      try {
+        const convRef = doc(db, 'conversations', conversationId);
+        const convSnap = await getDoc(convRef);
+        const curUnreadAdmin = convSnap.exists() ? ((convSnap.data() as Conversation).unreadAdminCount || 0) : 0;
+
+        const q = query(collection(db, 'messages'), where('conversationId', '==', conversationId));
+        const remSnap = await getDocs(q);
+        const visibleMsgs = remSnap.docs
+          .map(d => ({ id: d.id, ...d.data() } as ChatMessage))
+          .filter(isMessageVisibleToSubAdmin)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+        const latestSub = visibleMsgs[0];
+        const subPreview = latestSub
+          ? (latestSub.originalText || latestSub.text || (latestSub.attachmentType ? `[${latestSub.attachmentType.toUpperCase()}]` : ''))
+          : '';
+
+        const convUpdate: Record<string, any> = {
+          subAdminLastMessage: subPreview,
+          updatedAt: now
+        };
+
+        if (isApproved) {
+          convUpdate.lastMessage = messageText || subPreview || 'Photo / receipt approved';
+          convUpdate.lastMessageTime = now;
+          convUpdate.unreadAdminCount = curUnreadAdmin + 1;
+        }
+
+        await updateDoc(convRef, convUpdate);
+      } catch (e) {
+        console.warn('Notice updating conversation on moderation:', e);
+      }
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
@@ -1341,6 +1410,10 @@ export async function toggleMessageSubAdminAccess(
 
     if (convId) {
       try {
+        const convRef = doc(db, 'conversations', convId);
+        const convSnap = await getDoc(convRef);
+        const curUnreadAdmin = convSnap.exists() ? ((convSnap.data() as Conversation).unreadAdminCount || 0) : 0;
+
         const q = query(collection(db, 'messages'), where('conversationId', '==', convId));
         const remSnap = await getDocs(q);
         const visibleMsgs = remSnap.docs
@@ -1349,12 +1422,19 @@ export async function toggleMessageSubAdminAccess(
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
         const latestSub = visibleMsgs[0];
-        await updateDoc(doc(db, 'conversations', convId), {
+        const convUpdate: Record<string, any> = {
           subAdminLastMessage: latestSub
             ? (latestSub.originalText || latestSub.text || (latestSub.attachmentType ? `[${latestSub.attachmentType.toUpperCase()}]` : ''))
             : '',
           updatedAt: new Date().toISOString()
-        });
+        };
+
+        // When Super Admin grants Sub-Admin access to a held customer photo/receipt/message, notify Sub-Admin dashboard
+        if (allowSubAdmin && existingMsg?.senderRole === 'customer' && !existingMsg?.sharedWithSubAdmin) {
+          convUpdate.unreadAdminCount = curUnreadAdmin + 1;
+        }
+
+        await updateDoc(convRef, convUpdate);
       } catch (e) {
         console.warn('Notice refreshing subAdminLastMessage on access toggle:', e);
       }
