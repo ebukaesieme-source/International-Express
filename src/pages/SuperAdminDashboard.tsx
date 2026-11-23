@@ -169,6 +169,15 @@ export const SuperAdminDashboard: React.FC = () => {
   const [showUserPassText, setShowUserPassText] = useState(false);
   const [savingEditUser, setSavingEditUser] = useState(false);
 
+  // Dedicated Change & Update Customer Password Modal states
+  const [passwordTargetUser, setPasswordTargetUser] = useState<UserProfile | null>(null);
+  const [customerNewPassword, setCustomerNewPassword] = useState('');
+  const [customerConfirmPassword, setCustomerConfirmPassword] = useState('');
+  const [showCustomerPassText, setShowCustomerPassText] = useState(false);
+  const [showCurrentCustomerPass, setShowCurrentCustomerPass] = useState(false);
+  const [savingCustomerPassword, setSavingCustomerPassword] = useState(false);
+  const [customerPasswordError, setCustomerPasswordError] = useState('');
+
   const [showTransferModal, setShowTransferModal] = useState<UserProfile | null>(null);
   const [transferTargetSubAdmin, setTransferTargetSubAdmin] = useState('');
 
@@ -412,9 +421,15 @@ export const SuperAdminDashboard: React.FC = () => {
         usaOnlyLogin: editUserForm.usaOnlyLogin
       };
 
-      if (editUserForm.newPassword.trim()) {
-        updates.customPassword = editUserForm.newPassword.trim();
-        await updateUserPassword(editingUser.uid, editUserForm.newPassword.trim());
+      const normalizedEmail = editUserForm.email.trim().toLowerCase();
+      const trimmedNewPassword = editUserForm.newPassword.trim();
+      const passwordChanged = Boolean(trimmedNewPassword) && trimmedNewPassword !== (editingUser.customPassword || '').trim();
+
+      if (trimmedNewPassword) {
+        updates.customPassword = trimmedNewPassword;
+        if (passwordChanged) {
+          await updateUserPassword(editingUser.uid, trimmedNewPassword, normalizedEmail);
+        }
       }
 
       await createOrUpdateUserProfile({
@@ -426,7 +441,7 @@ export const SuperAdminDashboard: React.FC = () => {
         'user_account_edited',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
-        `Super Admin updated ${editingUser.role} profile for ${editUserForm.fullName} (${editUserForm.email}). ${editUserForm.newPassword ? 'Password was also updated/reset.' : ''}`,
+        `Super Admin updated ${editingUser.role} profile for ${editUserForm.fullName} (${editUserForm.email}). ${passwordChanged ? 'Password was also updated/reset.' : ''}`,
         editingUser.uid
       );
 
@@ -438,6 +453,78 @@ export const SuperAdminDashboard: React.FC = () => {
       showToast('Failed to update user account.', 'error');
     } finally {
       setSavingEditUser(false);
+    }
+  };
+
+  // Open dedicated Change & Update Customer Password modal
+  const handleOpenCustomerPasswordModal = (user: UserProfile) => {
+    setPasswordTargetUser(user);
+    setCustomerNewPassword('');
+    setCustomerConfirmPassword('');
+    setShowCustomerPassText(false);
+    setShowCurrentCustomerPass(false);
+    setCustomerPasswordError('');
+  };
+
+  // Save updated customer password directly from Super Admin Dashboard
+  const handleSaveCustomerPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordTargetUser) return;
+
+    const trimmedNew = customerNewPassword.trim();
+    const trimmedConfirm = customerConfirmPassword.trim();
+
+    if (trimmedNew.length < 6) {
+      setCustomerPasswordError('New password must be at least 6 characters.');
+      return;
+    }
+    if (trimmedNew !== trimmedConfirm) {
+      setCustomerPasswordError('Passwords do not match. Please re-enter carefully.');
+      return;
+    }
+
+    setCustomerPasswordError('');
+    setSavingCustomerPassword(true);
+    try {
+      const normalizedEmail = (passwordTargetUser.email || '').trim().toLowerCase();
+      await updateUserPassword(passwordTargetUser.uid, trimmedNew, normalizedEmail);
+
+      await addAuditLog(
+        'customer_password_updated',
+        userProfile?.fullName || 'Super Admin',
+        'super_admin',
+        `Super Admin changed and updated login password for ${passwordTargetUser.fullName} (${passwordTargetUser.email}).`,
+        passwordTargetUser.uid
+      );
+
+      const now = new Date().toISOString();
+      setCustomers(prev =>
+        prev.map(c =>
+          c.uid === passwordTargetUser.uid
+            ? { ...c, customPassword: trimmedNew, passwordUpdatedAt: now, updatedAt: now }
+            : c
+        )
+      );
+      setSubAdmins(prev =>
+        prev.map(s =>
+          s.uid === passwordTargetUser.uid
+            ? { ...s, customPassword: trimmedNew, passwordUpdatedAt: now, updatedAt: now }
+            : s
+        )
+      );
+
+      const targetName = passwordTargetUser.fullName;
+      setPasswordTargetUser(null);
+      setCustomerNewPassword('');
+      setCustomerConfirmPassword('');
+      await loadAllData();
+      showToast(`Password updated for ${targetName}! New password is active immediately.`);
+    } catch (err) {
+      console.error(err);
+      setCustomerPasswordError('Failed to update password. Please try again.');
+      showToast('Failed to update customer password.', 'error');
+    } finally {
+      setSavingCustomerPassword(false);
     }
   };
 
@@ -1380,14 +1467,24 @@ export const SuperAdminDashboard: React.FC = () => {
                             </td>
                             <td className="py-3.5 px-4 text-right">
                               <div className="flex items-center justify-end flex-wrap gap-1.5">
-                                {/* 1. Edit & Pass */}
+                                {/* 1. Change Password (Quick Reset) */}
+                                <button
+                                  onClick={() => handleOpenCustomerPasswordModal(cust)}
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-300 cursor-pointer inline-flex items-center space-x-1 transition-colors"
+                                  title="Change and update customer login password"
+                                >
+                                  <Key className="w-3 h-3 text-amber-600" />
+                                  <span>Change Password</span>
+                                </button>
+
+                                {/* 2. Edit & Pass */}
                                 <button
                                   onClick={() => handleOpenEditUser(cust)}
                                   className="px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 cursor-pointer inline-flex items-center space-x-1 transition-colors"
                                   title="Edit Customer profile and set password"
                                 >
                                   <Edit className="w-3 h-3" />
-                                  <span>Edit & Pass</span>
+                                  <span>Edit</span>
                                 </button>
 
                                 {/* 2. Suspend / Reactivate */}
@@ -2809,6 +2906,139 @@ export const SuperAdminDashboard: React.FC = () => {
                 >
                   <Save className="w-4 h-4" />
                   <span>{savingEditUser ? 'Saving Changes...' : 'Save User Account'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CHANGE & UPDATE CUSTOMER PASSWORD MODAL */}
+      {passwordTargetUser && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full max-h-[90dvh] overflow-y-auto shadow-2xl border border-gray-100">
+            <div className="bg-gradient-to-r from-[#0A2540] to-[#12385e] text-white p-5 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
+                  <Key className="w-5 h-5 text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base">Change Customer Password</h3>
+                  <p className="text-[11px] text-amber-200 truncate max-w-[230px]">
+                    {passwordTargetUser.fullName}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPasswordTargetUser(null)}
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCustomerPassword} className="p-5 sm:p-6 space-y-4">
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-gray-200 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-gray-500 font-semibold">Customer:</span>
+                  <span className="font-extrabold text-gray-900 text-right">{passwordTargetUser.fullName}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-gray-500 font-semibold">Login Email:</span>
+                  <span className="font-mono font-bold text-blue-700 text-right break-all">{passwordTargetUser.email}</span>
+                </div>
+                {passwordTargetUser.customPassword && (
+                  <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-gray-200">
+                    <span className="text-gray-500 font-semibold">Current Password:</span>
+                    <div className="flex items-center space-x-2">
+                      <span className="font-mono font-bold text-gray-800">
+                        {showCurrentCustomerPass ? passwordTargetUser.customPassword : '••••••••'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowCurrentCustomerPass(!showCurrentCustomerPass)}
+                        className="text-gray-500 hover:text-gray-700 cursor-pointer"
+                        title={showCurrentCustomerPass ? 'Hide current password' : 'Show current password'}
+                      >
+                        {showCurrentCustomerPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {customerPasswordError && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs font-bold text-red-700">
+                  {customerPasswordError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                  New Password *
+                </label>
+                <div className="relative">
+                  <input
+                    type={showCustomerPassText ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    value={customerNewPassword}
+                    onChange={(e) => {
+                      setCustomerNewPassword(e.target.value);
+                      if (customerPasswordError) setCustomerPasswordError('');
+                    }}
+                    placeholder="Enter new password (min 6 characters)"
+                    className="w-full px-3 py-2.5 pr-10 bg-white border border-amber-300 rounded-xl text-xs font-mono font-bold text-gray-900 focus:outline-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomerPassText(!showCustomerPassText)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+                    title={showCustomerPassText ? 'Hide password' : 'Show password'}
+                  >
+                    {showCustomerPassText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                  Confirm New Password *
+                </label>
+                <input
+                  type={showCustomerPassText ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  value={customerConfirmPassword}
+                  onChange={(e) => {
+                    setCustomerConfirmPassword(e.target.value);
+                    if (customerPasswordError) setCustomerPasswordError('');
+                  }}
+                  placeholder="Re-enter new password"
+                  className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-mono font-bold text-gray-900 focus:outline-amber-500"
+                />
+              </div>
+
+              <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl p-2.5">
+                Updating takes effect immediately across all devices. The old password will stop working right away.
+              </p>
+
+              <div className="flex justify-end space-x-2.5 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setPasswordTargetUser(null)}
+                  className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingCustomerPassword}
+                  className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-xl shadow-md cursor-pointer inline-flex items-center space-x-1.5"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  <span>{savingCustomerPassword ? 'Updating...' : 'Update Password'}</span>
                 </button>
               </div>
             </form>

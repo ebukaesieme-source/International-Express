@@ -416,30 +416,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 2. Check all registered accounts in Firestore database (Sub Admins, Customers)
+    let matchedFirestorePasswordMismatch = false;
     try {
       const allUsers = await getAllUsers();
-      const match = allUsers.find(u => (u.email || '').toLowerCase().trim() === cleanEmail);
-      if (match) {
-        const expectedPass = match.customPassword || (match.role === 'sub_admin' ? 'subadmin12345' : '');
-        if (expectedPass && (pass === expectedPass || pass === match.customPassword)) {
-          // Enforce USA-only login restriction BEFORE signing in or creating session
-          await enforceUsaAccessForProfile(match, cleanEmail);
+      const matchingUsers = allUsers.filter(u => (u.email || '').toLowerCase().trim() === cleanEmail);
+      // Prefer the most recently password-updated profile if duplicate docs exist
+      const match = matchingUsers.sort((a, b) => {
+        const aTime = new Date(a.passwordUpdatedAt || a.updatedAt || 0).getTime();
+        const bTime = new Date(b.passwordUpdatedAt || b.updatedAt || 0).getTime();
+        if (bTime !== aTime) return bTime - aTime;
+        return (b.customPassword ? 1 : 0) - (a.customPassword ? 1 : 0);
+      })[0];
 
-          // Attempt background Firebase Auth sign-in / registration so Auth session exists
-          try {
-            await signInWithEmailAndPassword(auth, cleanEmail, pass);
-          } catch (e) {
+      if (match) {
+        const expectedPass = (match.customPassword || '').trim() || (match.role === 'sub_admin' ? 'subadmin12345' : '');
+        if (expectedPass) {
+          if (pass === expectedPass) {
+            // Enforce USA-only login restriction BEFORE signing in or creating session
+            await enforceUsaAccessForProfile(match, cleanEmail);
+
+            // Attempt background Firebase Auth sign-in / registration so Auth session exists
             try {
-              await createUserWithEmailAndPassword(auth, cleanEmail, pass);
-            } catch (createErr) {
-              // Keep going with profile
+              await signInWithEmailAndPassword(auth, cleanEmail, pass);
+            } catch {
+              try {
+                await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+              } catch {
+                // Keep going with authoritative Firestore profile (e.g. after Super Admin changed password)
+                if (auth.currentUser && (auth.currentUser.email || '').toLowerCase().trim() !== cleanEmail) {
+                  try {
+                    await signOut(auth);
+                  } catch {}
+                }
+              }
             }
+            markSessionActive();
+            safeSetSession('iec_demo_uid', match.uid);
+            safeSetSession('iec_demo_role', match.role);
+            setUserProfile(match);
+            return;
+          } else {
+            // Password was explicitly set/updated in Firestore (e.g. by Super Admin) — NEVER fall through
+            // to Firebase Auth with the stale old password.
+            matchedFirestorePasswordMismatch = true;
           }
-          markSessionActive();
-          safeSetSession('iec_demo_uid', match.uid);
-          safeSetSession('iec_demo_role', match.role);
-          setUserProfile(match);
-          return;
         }
       }
     } catch (e) {
@@ -447,6 +467,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw e;
       }
       console.warn('Firestore database credential check:', e);
+    }
+
+    if (matchedFirestorePasswordMismatch) {
+      throw new Error('Invalid email or password. Please verify your credentials.');
     }
 
     // 3. Direct Firebase Authentication Sign In
@@ -804,6 +828,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const prev = userProfileRef.current;
       if (!prev || prev.uid !== liveProfile.uid) return;
 
+      // 2b. If Super Admin changed this customer/sub-admin password while logged in, sign out immediately so new password takes effect on all devices
+      if (
+        liveProfile.role !== 'super_admin' &&
+        liveProfile.passwordUpdatedAt &&
+        prev.passwordUpdatedAt !== liveProfile.passwordUpdatedAt
+      ) {
+        await logoutRef.current();
+        return;
+      }
+
       const hasRuleOrProfileChange =
         prev.fullName !== liveProfile.fullName ||
         prev.email !== liveProfile.email ||
@@ -818,7 +852,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         prev.address !== liveProfile.address ||
         prev.notes !== liveProfile.notes ||
         prev.customPassword !== liveProfile.customPassword ||
-        prev.passwordVersion !== liveProfile.passwordVersion;
+        prev.passwordVersion !== liveProfile.passwordVersion ||
+        prev.passwordUpdatedAt !== liveProfile.passwordUpdatedAt;
 
       if (hasRuleOrProfileChange) {
         setUserProfile((curr) => (curr && curr.uid === liveProfile.uid ? { ...curr, ...liveProfile } : curr));

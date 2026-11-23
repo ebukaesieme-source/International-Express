@@ -21,6 +21,7 @@ export interface UserProfile {
   notes?: string;
   customPassword?: string;
   passwordVersion?: string;
+  passwordUpdatedAt?: string;
   isOnline?: boolean;
   lastSeen?: string;
   usaOnlyLogin?: boolean;

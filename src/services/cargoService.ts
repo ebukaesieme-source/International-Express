@@ -87,6 +87,7 @@ export async function createOrUpdateUserProfile(profile: Partial<UserProfile> & 
       notes: profile.notes ?? existing?.notes ?? '',
       customPassword: profile.customPassword ?? existing?.customPassword,
       passwordVersion: profile.passwordVersion ?? existing?.passwordVersion,
+      passwordUpdatedAt: profile.passwordUpdatedAt ?? existing?.passwordUpdatedAt,
       usaOnlyLogin: profile.usaOnlyLogin ?? existing?.usaOnlyLogin,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
@@ -97,17 +98,49 @@ export async function createOrUpdateUserProfile(profile: Partial<UserProfile> & 
   }
 }
 
-export async function updateUserPassword(uid: string, newPassword: string): Promise<void> {
+export async function updateUserPassword(uid: string, newPassword: string, email?: string): Promise<void> {
   const path = `users/${uid}`;
+  const trimmedPassword = newPassword.trim();
+  const now = new Date().toISOString();
   try {
     const payload: Record<string, any> = {
-      customPassword: newPassword,
-      updatedAt: new Date().toISOString()
+      customPassword: trimmedPassword,
+      passwordUpdatedAt: now,
+      updatedAt: now
     };
     if (uid === 'super_admin_seed') {
       payload.passwordVersion = 'zara_v1';
     }
+
+    // Read existing doc to discover email if not passed in
+    let normalizedEmail = (email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+      try {
+        const primarySnap = await getDoc(doc(db, 'users', uid));
+        if (primarySnap.exists()) {
+          normalizedEmail = ((primarySnap.data() as UserProfile).email || '').trim().toLowerCase();
+        }
+      } catch {}
+    }
+
     await setDoc(doc(db, 'users', uid), payload, { merge: true });
+
+    // Also synchronize any duplicate user documents sharing the same uid field or normalized email
+    // so login checks never hit a stale password record on any device.
+    try {
+      const snap = await getDocs(collection(db, 'users'));
+      const syncTargets = snap.docs.filter((d) => {
+        if (d.id === uid) return false;
+        const data = d.data() as UserProfile;
+        const docEmail = (data.email || '').trim().toLowerCase();
+        return data.uid === uid || (Boolean(normalizedEmail) && docEmail === normalizedEmail);
+      });
+      await Promise.all(
+        syncTargets.map((d) => setDoc(doc(db, 'users', d.id), payload, { merge: true }))
+      );
+    } catch (syncErr) {
+      console.warn('Secondary user password sync warning:', syncErr);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
