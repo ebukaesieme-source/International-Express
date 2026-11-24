@@ -222,6 +222,7 @@ export interface SystemSettings {
   id: string;
   messageModeration: boolean;
   customerMessagesToSubAdminAutoOn?: boolean;
+  customerAutoOnPolicyVersion?: string;
   companyName: string;
   supportEmail: string;
   supportPhone: string;

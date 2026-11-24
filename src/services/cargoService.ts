@@ -1308,17 +1308,33 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
     const isCustomer = msg.senderRole === 'customer';
     const hasAttachment = Boolean(msg.attachmentUrl || msg.attachmentType);
 
-    // Rule: Whenever a customer sends a photo, image, video, document, or receipt,
+    // Rule 1: Whenever a customer sends a photo, image, video, document, or receipt,
     // ALWAYS hold it for Super Admin access approval before it arrives at Sub Admin dashboard.
-    const normalizedMsg: Omit<ChatMessage, 'id' | 'createdAt'> =
-      isCustomer && hasAttachment
-        ? {
-            ...msg,
-            sharedWithSubAdmin: false,
-            hiddenFromSubAdmin: true,
-            moderationStatus: 'pending_moderation'
-          }
-        : msg;
+    // Rule 2: All customer text messages stay AUTO ON for Sub Admin to see until Super Admin
+    // manually turns Customer Messages to Sub Admin OFF in system settings.
+    let normalizedMsg: Omit<ChatMessage, 'id' | 'createdAt'> = msg;
+    if (isCustomer && hasAttachment) {
+      normalizedMsg = {
+        ...msg,
+        sharedWithSubAdmin: false,
+        hiddenFromSubAdmin: true,
+        moderationStatus: 'pending_moderation'
+      };
+    } else if (isCustomer) {
+      let autoOnForSubAdmin = true;
+      try {
+        const liveSettings = await getSystemSettings();
+        autoOnForSubAdmin = liveSettings.customerMessagesToSubAdminAutoOn !== false;
+      } catch {
+        autoOnForSubAdmin = msg.sharedWithSubAdmin !== false;
+      }
+      normalizedMsg = {
+        ...msg,
+        sharedWithSubAdmin: autoOnForSubAdmin,
+        hiddenFromSubAdmin: !autoOnForSubAdmin,
+        moderationStatus: autoOnForSubAdmin ? 'approved' : 'pending_moderation'
+      };
+    }
 
     const dataToSave = cleanFirestoreData({
       ...normalizedMsg,
@@ -1671,10 +1687,13 @@ export async function deleteMessage(messageId: string, deletedBy: string): Promi
 
 /* ---------------- SYSTEM SETTINGS & AUDIT LOGS ---------------- */
 
+const CUSTOMER_AUTO_ON_POLICY_VERSION = 'auto_on_v1';
+
 const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   id: 'general',
   messageModeration: false,
   customerMessagesToSubAdminAutoOn: true,
+  customerAutoOnPolicyVersion: CUSTOMER_AUTO_ON_POLICY_VERSION,
   companyName: 'International Express Cargo',
   supportEmail: 'support@internationalexpresscargo.com',
   supportPhone: '+1 (800) 555-CARGO',
@@ -1688,10 +1707,11 @@ function normalizeSystemSettings(raw?: Partial<SystemSettings> | null): SystemSe
   let messageModeration: boolean;
   let customerMessagesToSubAdminAutoOn: boolean;
 
-  if (typeof raw?.messageModeration === 'boolean' && typeof raw?.customerMessagesToSubAdminAutoOn === 'boolean') {
-    // Keep both flags consistent; if legacy docs ever diverged, respect messageModeration as authoritative moderation switch
-    messageModeration = raw.messageModeration;
-    customerMessagesToSubAdminAutoOn = !raw.messageModeration;
+  // One-time migration: ensure customer messages to Sub Admin default to AUTO ON
+  // until Super Admin explicitly turns it OFF manually.
+  if (raw?.customerAutoOnPolicyVersion !== CUSTOMER_AUTO_ON_POLICY_VERSION) {
+    customerMessagesToSubAdminAutoOn = true;
+    messageModeration = false;
   } else if (typeof raw?.customerMessagesToSubAdminAutoOn === 'boolean') {
     customerMessagesToSubAdminAutoOn = raw.customerMessagesToSubAdminAutoOn;
     messageModeration = !raw.customerMessagesToSubAdminAutoOn;
@@ -1706,7 +1726,8 @@ function normalizeSystemSettings(raw?: Partial<SystemSettings> | null): SystemSe
   return {
     ...base,
     messageModeration,
-    customerMessagesToSubAdminAutoOn
+    customerMessagesToSubAdminAutoOn,
+    customerAutoOnPolicyVersion: CUSTOMER_AUTO_ON_POLICY_VERSION
   };
 }
 
@@ -1715,7 +1736,20 @@ export async function getSystemSettings(): Promise<SystemSettings> {
   try {
     const snap = await getDoc(doc(db, 'system_settings', 'general'));
     if (snap.exists()) {
-      return normalizeSystemSettings(snap.data() as Partial<SystemSettings>);
+      const raw = snap.data() as Partial<SystemSettings>;
+      const normalized = normalizeSystemSettings(raw);
+      if (raw?.customerAutoOnPolicyVersion !== CUSTOMER_AUTO_ON_POLICY_VERSION) {
+        setDoc(
+          doc(db, 'system_settings', 'general'),
+          {
+            customerMessagesToSubAdminAutoOn: true,
+            messageModeration: false,
+            customerAutoOnPolicyVersion: CUSTOMER_AUTO_ON_POLICY_VERSION
+          },
+          { merge: true }
+        ).catch(() => {});
+      }
+      return normalized;
     }
     const defaultSettings = normalizeSystemSettings();
     await setDoc(doc(db, 'system_settings', 'general'), defaultSettings, { merge: true });
@@ -1730,7 +1764,20 @@ export function subscribeToSystemSettings(callback: (settings: SystemSettings) =
     doc(db, 'system_settings', 'general'),
     (snap) => {
       if (snap.exists()) {
-        callback(normalizeSystemSettings(snap.data() as Partial<SystemSettings>));
+        const raw = snap.data() as Partial<SystemSettings>;
+        const normalized = normalizeSystemSettings(raw);
+        if (raw?.customerAutoOnPolicyVersion !== CUSTOMER_AUTO_ON_POLICY_VERSION) {
+          setDoc(
+            doc(db, 'system_settings', 'general'),
+            {
+              customerMessagesToSubAdminAutoOn: true,
+              messageModeration: false,
+              customerAutoOnPolicyVersion: CUSTOMER_AUTO_ON_POLICY_VERSION
+            },
+            { merge: true }
+          ).catch(() => {});
+        }
+        callback(normalized);
       } else {
         const defaults = normalizeSystemSettings();
         setDoc(doc(db, 'system_settings', 'general'), defaults, { merge: true }).catch(() => {});
@@ -1746,23 +1793,17 @@ export function subscribeToSystemSettings(callback: (settings: SystemSettings) =
 export async function updateSystemSettings(updates: Partial<SystemSettings>, updatedBy: string): Promise<void> {
   const path = 'system_settings/general';
   try {
-    const normalizedUpdates: Partial<SystemSettings> = { ...updates };
+    const normalizedUpdates: Partial<SystemSettings> = {
+      ...updates,
+      customerAutoOnPolicyVersion: CUSTOMER_AUTO_ON_POLICY_VERSION
+    };
 
-    // Always keep messageModeration and customerMessagesToSubAdminAutoOn mutually synchronized across all devices
-    if (
-      typeof updates.messageModeration === 'boolean' &&
-      updates.customerMessagesToSubAdminAutoOn === undefined
-    ) {
-      normalizedUpdates.customerMessagesToSubAdminAutoOn = !updates.messageModeration;
-    } else if (
-      typeof updates.customerMessagesToSubAdminAutoOn === 'boolean' &&
-      updates.messageModeration === undefined
-    ) {
+    // Always keep customerMessagesToSubAdminAutoOn and messageModeration mutually synchronized across all devices
+    if (typeof updates.customerMessagesToSubAdminAutoOn === 'boolean') {
+      normalizedUpdates.customerMessagesToSubAdminAutoOn = updates.customerMessagesToSubAdminAutoOn;
       normalizedUpdates.messageModeration = !updates.customerMessagesToSubAdminAutoOn;
-    } else if (
-      typeof updates.messageModeration === 'boolean' &&
-      typeof updates.customerMessagesToSubAdminAutoOn === 'boolean'
-    ) {
+    } else if (typeof updates.messageModeration === 'boolean') {
+      normalizedUpdates.messageModeration = updates.messageModeration;
       normalizedUpdates.customerMessagesToSubAdminAutoOn = !updates.messageModeration;
     }
 

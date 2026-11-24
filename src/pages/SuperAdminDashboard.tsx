@@ -667,16 +667,16 @@ export const SuperAdminDashboard: React.FC = () => {
     }
   };
 
-  // Moderation Toggle
+  // Customer Messages to Sub-Admin Auto-Delivery Toggle (stays AUTO ON until manually turned OFF)
   const handleToggleModeration = async () => {
-    if (!settings) return;
-    const nextVal = !settings.messageModeration;
-    const nextAutoOn = !nextVal;
+    const currentlyAutoOn = settings ? settings.customerMessagesToSubAdminAutoOn !== false : true;
+    const nextAutoOn = !currentlyAutoOn;
+    const nextModeration = !nextAutoOn;
     try {
       await updateSystemSettings(
         {
-          messageModeration: nextVal,
-          customerMessagesToSubAdminAutoOn: nextAutoOn
+          customerMessagesToSubAdminAutoOn: nextAutoOn,
+          messageModeration: nextModeration
         },
         userProfile?.fullName || 'Super Admin'
       );
@@ -684,16 +684,23 @@ export const SuperAdminDashboard: React.FC = () => {
         'moderation_setting_changed',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
-        `Super Admin turned Customer Message Moderation ${nextVal ? 'ON' : 'OFF'}`
+        `Super Admin manually switched Customer Messages to Sub-Admin ${nextAutoOn ? 'AUTO ON' : 'OFF (Manual Approval)'}`
       );
-      setSettings({
-        ...settings,
-        messageModeration: nextVal,
-        customerMessagesToSubAdminAutoOn: nextAutoOn
-      });
+      if (settings) {
+        setSettings({
+          ...settings,
+          messageModeration: nextModeration,
+          customerMessagesToSubAdminAutoOn: nextAutoOn
+        });
+      }
+      showToast(
+        nextAutoOn
+          ? 'Customer messages to Sub-Admin: AUTO ON (Sub-Admins see customer messages automatically).'
+          : 'Customer messages to Sub-Admin turned OFF (messages now wait for Super Admin approval).'
+      );
     } catch (err) {
       console.error(err);
-      alert('Failed to update moderation settings.');
+      showToast('Failed to update customer message auto-delivery setting.', 'error');
     }
   };
 
@@ -790,19 +797,27 @@ export const SuperAdminDashboard: React.FC = () => {
             <span className="sm:hidden">Edit</span>
           </button>
 
-          {/* Function 2: Moderation Toggle Quick Button */}
+          {/* Function 2: Customer Messages to Sub-Admin Auto-Delivery Quick Button */}
           <button
             onClick={handleToggleModeration}
             className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 border transition-colors cursor-pointer ${
-              settings?.messageModeration
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
-                : 'bg-gray-800 text-gray-400 border-gray-700 hover:text-white'
+              settings?.customerMessagesToSubAdminAutoOn !== false
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
             }`}
-            title="Toggle Global Customer Message Moderation"
+            title={
+              settings?.customerMessagesToSubAdminAutoOn !== false
+                ? 'Customer messages to Sub-Admin are AUTO ON. Click to manually turn OFF.'
+                : 'Customer messages to Sub-Admin are manually OFF. Click to turn AUTO ON.'
+            }
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Moderation: {settings?.messageModeration ? 'ON' : 'OFF'}</span>
-            <span className="md:hidden">{settings?.messageModeration ? 'Mod ON' : 'Mod OFF'}</span>
+            <span className="hidden md:inline">
+              Sub-Admin Auto: {settings?.customerMessagesToSubAdminAutoOn !== false ? 'ON' : 'OFF'}
+            </span>
+            <span className="md:hidden">
+              {settings?.customerMessagesToSubAdminAutoOn !== false ? 'Auto ON' : 'Auto OFF'}
+            </span>
           </button>
 
           {/* Function 3: Refresh System Data */}
@@ -1162,20 +1177,26 @@ export const SuperAdminDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Moderation Status Banner */}
+              {/* Customer-to-Sub-Admin Auto Delivery Banner */}
               <div className="bg-gradient-to-r from-[#0b132b] to-[#1c2541] rounded-2xl p-6 text-white flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div className="flex items-center space-x-3">
-                  <div className="p-3 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
+                  <div className={`p-3 rounded-xl border ${
+                    settings?.customerMessagesToSubAdminAutoOn !== false
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                      : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                  }`}>
                     <Shield className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="font-extrabold text-base">Customer Message Approval System</h3>
+                    <h3 className="font-extrabold text-base">Customer Messages to Sub-Admin</h3>
                     <p className="text-xs text-gray-300 mt-0.5">
-                      Moderation mode is currently{' '}
-                      <strong className={settings?.messageModeration ? 'text-amber-400' : 'text-emerald-400'}>
-                        {settings?.messageModeration ? 'ENABLED (Queue active)' : 'DISABLED (Direct delivery)'}
+                      Delivery to Sub-Admin is currently{' '}
+                      <strong className={settings?.customerMessagesToSubAdminAutoOn !== false ? 'text-emerald-400' : 'text-amber-400'}>
+                        {settings?.customerMessagesToSubAdminAutoOn !== false
+                          ? 'AUTO ON (Sub-Admins see customer messages automatically)'
+                          : 'MANUALLY OFF (Waiting for Super Admin approval)'}
                       </strong>
-                      . {pendingMessages.length} message(s) awaiting review.
+                      . {pendingMessages.length} item(s) awaiting Super Admin access.
                     </p>
                   </div>
                 </div>
@@ -1183,9 +1204,13 @@ export const SuperAdminDashboard: React.FC = () => {
                 <div className="flex items-center space-x-3">
                   <button
                     onClick={handleToggleModeration}
-                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-gray-950 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                    className={`px-4 py-2 font-bold text-xs rounded-xl transition-all cursor-pointer ${
+                      settings?.customerMessagesToSubAdminAutoOn !== false
+                        ? 'bg-amber-500 hover:bg-amber-400 text-gray-950'
+                        : 'bg-emerald-500 hover:bg-emerald-400 text-gray-950'
+                    }`}
                   >
-                    Switch Moderation {settings?.messageModeration ? 'OFF' : 'ON'}
+                    {settings?.customerMessagesToSubAdminAutoOn !== false ? 'Turn Auto OFF' : 'Turn Auto ON'}
                   </button>
                   {pendingMessages.length > 0 && (
                     <button
@@ -2305,23 +2330,23 @@ export const SuperAdminDashboard: React.FC = () => {
               </div>
 
               <div className="space-y-6 max-w-2xl">
-                {/* Moderation Switch */}
+                {/* Customer-to-Sub-Admin Auto-Delivery Switch */}
                 <div className="p-4 sm:p-5 bg-slate-50 border border-gray-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <h4 className="font-bold text-sm text-gray-900">Message Moderation Protocol</h4>
+                    <h4 className="font-bold text-sm text-gray-900">Customer Messages to Sub-Admin (Auto ON)</h4>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      When active, customer messages must be reviewed and approved by Super Admin before Sub Admins see them.
+                      Stays AUTO ON so Sub-Admins see customer messages automatically until Super Admin manually turns it OFF. Customer photos & receipts always wait for Super Admin access.
                     </p>
                   </div>
                   <button
                     onClick={handleToggleModeration}
                     className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 self-start sm:self-auto ${
-                      settings?.messageModeration
-                        ? 'bg-amber-600 text-white shadow-md'
-                        : 'bg-gray-200 text-gray-700'
+                      settings?.customerMessagesToSubAdminAutoOn !== false
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md'
+                        : 'bg-amber-600 hover:bg-amber-700 text-white shadow-md'
                     }`}
                   >
-                    {settings?.messageModeration ? 'Moderation ON' : 'Moderation OFF'}
+                    {settings?.customerMessagesToSubAdminAutoOn !== false ? 'AUTO ON' : 'OFF (Manual)'}
                   </button>
                 </div>
 

@@ -144,9 +144,9 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
         `Super Admin turned Customer Messages to Sub-Admin: ${nextVal ? 'AUTO ON' : 'AUTO OFF'}`
       );
       setCustomerMessagesAutoOn(nextVal);
+      customerMessagesAutoOnRef.current = nextVal;
     } catch (err) {
-      console.error(err);
-      alert('Failed to update moderation settings.');
+      console.error('Failed to update customer message auto-delivery setting:', err);
     }
   };
 
@@ -449,7 +449,10 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               ) : (
                 <EyeOff className="w-3.5 h-3.5 shrink-0" />
               )}
-              <span>Auto: {customerMessagesAutoOn ? 'ON' : 'OFF'}</span>
+              <span className="hidden sm:inline">
+                Sub-Admin Auto: {customerMessagesAutoOn ? 'ON' : 'OFF'}
+              </span>
+              <span className="sm:hidden">Auto: {customerMessagesAutoOn ? 'ON' : 'OFF'}</span>
             </button>
           )}
           {(onReturn || onClose) && (
