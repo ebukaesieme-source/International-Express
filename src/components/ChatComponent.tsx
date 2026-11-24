@@ -27,6 +27,7 @@ import {
   subscribeToMessages,
   sendMessage,
   editMessage,
+  toggleMessageOriginalForCustomer,
   deleteMessage,
   toggleMessageSubAdminAccess,
   subscribeToSystemSettings,
@@ -261,7 +262,21 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
       setEditText('');
     } catch (err) {
       console.error(err);
-      alert('Failed to edit message.');
+    }
+  };
+
+  const handleToggleOldMessageForCustomer = async (msg: ChatMessage, showOriginal: boolean) => {
+    try {
+      await toggleMessageOriginalForCustomer(msg.id, showOriginal);
+      await addAuditLog(
+        showOriginal ? 'old_message_for_customer_on' : 'old_message_for_customer_off',
+        currentUserProfile.fullName,
+        currentUserProfile.role,
+        `Super Admin switched OLD MESSAGE FOR CUSTOMER ${showOriginal ? 'ON (Customer sees original message)' : 'OFF (Customer sees edited message)'} for message ID ${msg.id}.`,
+        msg.id
+      );
+    } catch (err) {
+      console.error('Failed to toggle old message for customer:', err);
     }
   };
 
@@ -343,16 +358,21 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   };
 
   // User requested: "super admin can edit sub admin message to customer, but sub admin will still see his old message, only the customer will see the new message"
+  // AND: "after super admin have edited messages, there power to still choose the old message to appear for customer, WRITTEN OLD MESSAGER FOR CUSTOMER ON."
   const getMessageDisplayText = (msg: ChatMessage): string => {
     if (isSubAdmin) {
       // Sub Admin ALWAYS continues to see his old/original message as requested!
       return msg.originalText || msg.text;
     }
+    if (msg.showOriginalToCustomer === true) {
+      // Super Admin switched "OLD MESSAGE FOR CUSTOMER: ON" -> show the old/original message to customer!
+      return msg.originalText || msg.text;
+    }
     if (isCustomer) {
-      // Customer ONLY sees the new message edited by Super Admin!
+      // Customer sees the edited message when OLD MESSAGE FOR CUSTOMER is OFF
       return msg.customerDisplayText || msg.text;
     }
-    // Super Admin sees customer-facing text (new message)
+    // Super Admin sees what the customer currently sees
     return msg.customerDisplayText || msg.text;
   };
 
@@ -697,21 +717,53 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                     {displayText}
                   </div>
 
-                  {/* Super Admin Transparency View: Shows what customer sees vs what Sub-Admin sees if edited */}
-                  {isSuperAdmin && msg.customerDisplayText && msg.customerDisplayText !== msg.text && (
-                    <div className={`mt-2 pt-2 border-t text-[10px] space-y-0.5 ${isMe ? 'border-white/25 text-blue-100' : 'border-amber-300/60 text-amber-800'}`}>
-                      <div className="font-bold flex items-center space-x-1">
-                        <Edit2 className="w-3 h-3" />
-                        <span>Modified Message:</span>
+                  {/* Super Admin Transparency View & Power to Switch Back to Old Message for Customer */}
+                  {isSuperAdmin && (msg.isEdited || (msg.customerDisplayText && msg.customerDisplayText !== (msg.originalText || msg.text))) && (() => {
+                    const oldMessageOn = msg.showOriginalToCustomer === true;
+                    const originalMsgText = msg.originalText || msg.text;
+                    const editedMsgText = msg.customerDisplayText || msg.text;
+                    return (
+                      <div className={`mt-2 pt-2 border-t text-[10px] space-y-1.5 ${isMe ? 'border-white/25 text-blue-100' : 'border-amber-300/60 text-amber-900'}`}>
+                        <div className="flex items-center justify-between flex-wrap gap-1.5">
+                          <div className="font-bold flex items-center space-x-1">
+                            <Edit2 className="w-3 h-3" />
+                            <span>
+                              {oldMessageOn ? 'Customer Currently Sees: OLD MESSAGE' : 'Customer Currently Sees: EDITED MESSAGE'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleOldMessageForCustomer(msg, !oldMessageOn)}
+                            className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide transition-all cursor-pointer shadow-xs border ${
+                              oldMessageOn
+                                ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 border-amber-200'
+                                : isMe
+                                ? 'bg-white/20 hover:bg-white/30 text-white border-white/35'
+                                : 'bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-300'
+                            }`}
+                            title={
+                              oldMessageOn
+                                ? 'OLD MESSAGE FOR CUSTOMER is ON — customer sees the original old message. Click to switch back to the edited message.'
+                                : 'Click to turn OLD MESSAGE FOR CUSTOMER ON so the old original message appears for the customer.'
+                            }
+                          >
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                oldMessageOn ? 'bg-emerald-600' : isMe ? 'bg-blue-200/80' : 'bg-amber-500/70'
+                              }`}
+                            />
+                            <span>OLD MESSAGE FOR CUSTOMER: {oldMessageOn ? 'ON' : 'OFF'}</span>
+                          </button>
+                        </div>
+                        <div className={oldMessageOn ? 'opacity-75' : 'font-semibold opacity-100'}>
+                          Edited: &ldquo;{editedMsgText}&rdquo;
+                        </div>
+                        <div className={oldMessageOn ? 'font-semibold opacity-100' : 'opacity-80 italic'}>
+                          Old / Original: &ldquo;{originalMsgText}&rdquo;
+                        </div>
                       </div>
-                      <div className="opacity-95">
-                        Updated: &ldquo;{msg.customerDisplayText}&rdquo;
-                      </div>
-                      <div className="opacity-80 italic">
-                        Original: &ldquo;{msg.text}&rdquo;
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Super Admin Sub-Admin Visibility Toggle on Direct Messages written by Super Admin */}
                   {isSuperAdmin && isSuperAdminMsg && (() => {

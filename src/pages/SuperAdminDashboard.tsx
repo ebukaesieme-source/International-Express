@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users,
   Shield,
@@ -42,7 +42,9 @@ import {
   UserPlus,
   Menu,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Smartphone,
+  Monitor
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -82,6 +84,8 @@ import {
   subscribeToSystemSettings,
   updateSystemSettings,
   getAuditLogs,
+  subscribeToAuditLogs,
+  buildAllCustomerDeviceLogins,
   addAuditLog,
   sendMessage,
   getAllPayments,
@@ -89,7 +93,9 @@ import {
 } from '../services/cargoService';
 import { ChatComponent } from '../components/ChatComponent';
 import { TrackingSection } from '../components/TrackingSection';
+import { CustomerDeviceHistoryPanel } from '../components/CustomerDeviceHistoryPanel';
 import { isUsaOnlyRestrictedAccount } from '../utils/geoAccess';
+import { formatHoursAgoLabel } from '../utils/deviceInfo';
 
 export const SuperAdminDashboard: React.FC = () => {
   const { userProfile, logout, changeSuperAdminPassword, updateSuperAdminProfile } = useAuth();
@@ -100,6 +106,7 @@ export const SuperAdminDashboard: React.FC = () => {
     | 'overview'
     | 'subadmins'
     | 'customers'
+    | 'devices'
     | 'shipments'
     | 'moderation'
     | 'messages'
@@ -197,8 +204,17 @@ export const SuperAdminDashboard: React.FC = () => {
   // Active Chat Modal / Drawer
   const [activeChatConversation, setActiveChatConversation] = useState<Conversation | null>(null);
 
+  // Individual Customer Device Login History Modal
+  const [deviceHistoryCustomer, setDeviceHistoryCustomer] = useState<UserProfile | null>(null);
+
   // Announcement state
   const [announcementText, setAnnouncementText] = useState('');
+
+  // Complete customer device login history since website launch (combines live audit_logs + customer profiles + historical records)
+  const allCustomerDeviceLogins = useMemo(
+    () => buildAllCustomerDeviceLogins(customers, auditLogs),
+    [customers, auditLogs]
+  );
 
   useEffect(() => {
     loadAllData();
@@ -208,9 +224,13 @@ export const SuperAdminDashboard: React.FC = () => {
     const unsubPending = subscribeToPendingModerationMessages((livePending) => {
       setPendingMessages(livePending);
     });
+    const unsubAudits = subscribeToAuditLogs((liveAudits) => {
+      setAuditLogs(liveAudits);
+    });
     return () => {
       unsubSettings();
       unsubPending();
+      unsubAudits();
     };
   }, []);
 
@@ -966,6 +986,28 @@ export const SuperAdminDashboard: React.FC = () => {
 
               <button
                 onClick={() => {
+                  setActiveSection('devices');
+                  setSidebarOpen(false);
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
+                  activeSection === 'devices'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-gray-700 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center space-x-2.5 min-w-0">
+                  <Smartphone className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Customer Devices</span>
+                </div>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                  activeSection === 'devices' ? 'bg-white/20 text-white' : 'bg-indigo-50 text-indigo-700'
+                }`}>
+                  {allCustomerDeviceLogins.length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
                   setActiveSection('moderation');
                   setSidebarOpen(false);
                 }}
@@ -1453,6 +1495,8 @@ export const SuperAdminDashboard: React.FC = () => {
                       })
                       .map((cust) => {
                         const custShipments = shipments.filter(s => s.customerId === cust.uid);
+                        const custDevices = allCustomerDeviceLogins.filter(d => d.customerId === cust.uid);
+                        const latestDevice = custDevices[0];
                         const isUnassigned = !cust.assignedSubAdminId || cust.assignedSubAdminId === 'unassigned';
 
                         return (
@@ -1468,6 +1512,18 @@ export const SuperAdminDashboard: React.FC = () => {
                               </div>
                               <div className="text-gray-500 text-[11px]">{cust.email}</div>
                               <div className="text-gray-400 text-[10px]">{cust.phoneNumber || cust.phone || 'No phone'}</div>
+                              {latestDevice && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDeviceHistoryCustomer(cust)}
+                                  className="mt-1 inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-bold cursor-pointer transition-colors max-w-[260px]"
+                                  title="View all devices that logged into this customer account"
+                                >
+                                  <Smartphone className="w-3 h-3 shrink-0 text-indigo-600" />
+                                  <span className="truncate">{latestDevice.deviceName}</span>
+                                  <span className="text-indigo-500 shrink-0">• {formatHoursAgoLabel(latestDevice.loggedInAt)}</span>
+                                </button>
+                              )}
                             </td>
                             <td className="py-3.5 px-4">
                               <div className="font-bold text-gray-800">{cust.country}</div>
@@ -1492,6 +1548,16 @@ export const SuperAdminDashboard: React.FC = () => {
                             </td>
                             <td className="py-3.5 px-4 text-right">
                               <div className="flex items-center justify-end flex-wrap gap-1.5">
+                                {/* 0. Device Login History (All devices + hours-ago search) */}
+                                <button
+                                  onClick={() => setDeviceHistoryCustomer(cust)}
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200 cursor-pointer inline-flex items-center space-x-1 transition-colors"
+                                  title="View all devices that have logged into this customer account, date/time, and search by hours ago"
+                                >
+                                  <Smartphone className="w-3 h-3 text-indigo-600" />
+                                  <span>Devices ({custDevices.length})</span>
+                                </button>
+
                                 {/* 1. Change Password (Quick Reset) */}
                                 <button
                                   onClick={() => handleOpenCustomerPasswordModal(cust)}
@@ -2372,8 +2438,80 @@ export const SuperAdminDashboard: React.FC = () => {
               </div>
             </div>
           )}
+          {/* ==================== CUSTOMER DEVICES SECTION ==================== */}
+          {activeSection === 'devices' && (
+            <div className="bg-white rounded-3xl border border-gray-200 shadow-xs p-4 sm:p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-600 flex items-center justify-center text-white shadow-sm shrink-0">
+                    <Monitor className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-black text-gray-900">
+                      Customer Device Login History
+                    </h2>
+                    <p className="text-xs text-gray-500">
+                      Inspect every device logged into any individual customer account (new & old since launch), exact date/time, and search by hours ago.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={loadAllData}
+                  disabled={loading}
+                  className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-gray-800 text-xs font-bold inline-flex items-center space-x-1.5 cursor-pointer self-start sm:self-auto"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  <span>Refresh Devices</span>
+                </button>
+              </div>
+
+              <CustomerDeviceHistoryPanel
+                customers={customers}
+                allDeviceLogins={allCustomerDeviceLogins}
+              />
+            </div>
+          )}
         </main>
       </div>
+
+      {/* INDIVIDUAL CUSTOMER DEVICE LOGIN HISTORY MODAL */}
+      {deviceHistoryCustomer && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[92dvh] overflow-hidden shadow-2xl border border-gray-200 flex flex-col">
+            <div className="bg-gradient-to-r from-[#0A2540] to-indigo-950 text-white p-4 sm:p-5 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center space-x-3 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/25 border border-indigo-400/40 flex items-center justify-center shrink-0">
+                  <Smartphone className="w-5 h-5 text-indigo-200" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-extrabold text-sm sm:text-base truncate">
+                    Device Login History — {deviceHistoryCustomer.fullName}
+                  </h3>
+                  <p className="text-[11px] text-indigo-200 truncate">
+                    {deviceHistoryCustomer.email} • All devices logged in since account creation
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeviceHistoryCustomer(null)}
+                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white cursor-pointer shrink-0"
+                title="Close Device History"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+              <CustomerDeviceHistoryPanel
+                customers={customers}
+                allDeviceLogins={allCustomerDeviceLogins}
+                lockedCustomer={deviceHistoryCustomer}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CREATE SUB ADMIN MODAL */}
       {showCreateSubAdminModal && (

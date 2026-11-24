@@ -29,8 +29,10 @@ import {
   CustomsPaymentStatus,
   ShipmentStatus,
   AppNotification,
-  ItemizedFee
+  ItemizedFee,
+  DeviceLoginRecord
 } from '../types';
+import { detectCurrentDeviceInfoAsync } from '../utils/deviceInfo';
 
 /**
  * Strips all undefined properties recursively from an object before writing to Firestore,
@@ -88,6 +90,10 @@ export async function createOrUpdateUserProfile(profile: Partial<UserProfile> & 
       customPassword: profile.customPassword ?? existing?.customPassword,
       passwordVersion: profile.passwordVersion ?? existing?.passwordVersion,
       passwordUpdatedAt: profile.passwordUpdatedAt ?? existing?.passwordUpdatedAt,
+      lastLoginAt: profile.lastLoginAt ?? existing?.lastLoginAt,
+      lastDeviceName: profile.lastDeviceName ?? existing?.lastDeviceName,
+      lastDeviceType: profile.lastDeviceType ?? existing?.lastDeviceType,
+      deviceLogins: profile.deviceLogins ?? existing?.deviceLogins,
       usaOnlyLogin: profile.usaOnlyLogin ?? existing?.usaOnlyLogin,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
@@ -1541,6 +1547,7 @@ export async function editMessage(
     await updateDoc(doc(db, 'messages', messageId), {
       customerDisplayText: newText,
       originalText: originalText,
+      showOriginalToCustomer: false,
       isEdited: true,
       editedAt: new Date().toISOString(),
       editedBy
@@ -1560,6 +1567,46 @@ export async function editMessage(
         await updateDoc(doc(db, 'conversations', current.conversationId), convUpdate);
       } catch (convErr) {
         console.warn('Notice updating conversation preview:', convErr);
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function toggleMessageOriginalForCustomer(
+  messageId: string,
+  showOriginal: boolean
+): Promise<void> {
+  const path = `messages/${messageId}`;
+  try {
+    const snap = await getDoc(doc(db, 'messages', messageId));
+    if (!snap.exists()) return;
+    const current = snap.data() as ChatMessage;
+    const originalText = current.originalText || current.text;
+    const editedText = current.customerDisplayText || current.text;
+
+    await updateDoc(doc(db, 'messages', messageId), {
+      showOriginalToCustomer: showOriginal
+    });
+
+    if (current.conversationId) {
+      try {
+        const q = query(collection(db, 'messages'), where('conversationId', '==', current.conversationId));
+        const remSnap = await getDocs(q);
+        const nonDeleted = remSnap.docs
+          .map(d => ({ id: d.id, ...d.data() } as ChatMessage))
+          .filter(m => !m.isDeleted && m.moderationStatus !== 'rejected')
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+        if (nonDeleted[0]?.id === messageId) {
+          await updateDoc(doc(db, 'conversations', current.conversationId), {
+            lastMessage: showOriginal ? originalText : editedText,
+            updatedAt: new Date().toISOString()
+          });
+        }
+      } catch (convErr) {
+        console.warn('Notice updating conversation preview on old-message toggle:', convErr);
       }
     }
   } catch (error) {
@@ -1855,6 +1902,249 @@ export async function getAuditLogs(): Promise<AuditLog[]> {
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
   }
+}
+
+export function subscribeToAuditLogs(callback: (logs: AuditLog[]) => void) {
+  return onSnapshot(
+    collection(db, 'audit_logs'),
+    (snap) => {
+      const logs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as AuditLog))
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      callback(logs);
+    },
+    (err) => {
+      console.warn('subscribeToAuditLogs notice:', err);
+    }
+  );
+}
+
+export async function recordCustomerDeviceLogin(
+  profile: Pick<UserProfile, 'uid' | 'fullName' | 'email' | 'role'>,
+  loginMethod: string = 'Email & Password'
+): Promise<void> {
+  if (!profile?.uid || profile.role !== 'customer') return;
+  try {
+    const now = new Date().toISOString();
+    const device = await detectCurrentDeviceInfoAsync();
+    const recordId = `dev_${profile.uid}_${Date.now()}`;
+
+    const record: DeviceLoginRecord = {
+      id: recordId,
+      customerId: profile.uid,
+      customerName: profile.fullName || 'Customer',
+      customerEmail: (profile.email || '').toLowerCase().trim(),
+      deviceName: device.deviceName,
+      deviceType: device.deviceType,
+      deviceModel: device.deviceModel,
+      os: device.os,
+      browser: device.browser,
+      screenResolution: device.screenResolution,
+      timezone: device.timezone,
+      userAgent: device.userAgent,
+      loginMethod,
+      loggedInAt: now,
+      isHistorical: false
+    };
+
+    // 1. Write permanent immutable record to audit_logs so ALL logins since website launch are preserved forever
+    await addDoc(
+      collection(db, 'audit_logs'),
+      cleanFirestoreData({
+        action: 'customer_device_login',
+        performedBy: record.customerName,
+        performedByRole: 'customer',
+        targetId: profile.uid,
+        targetType: 'device_login',
+        details: `${record.customerName} (${record.customerEmail}) logged in using ${record.deviceName} [${record.deviceType}] via ${loginMethod}.`,
+        timestamp: now,
+        customerEmail: record.customerEmail,
+        customerName: record.customerName,
+        deviceName: record.deviceName,
+        deviceType: record.deviceType,
+        deviceModel: record.deviceModel,
+        os: record.os,
+        browser: record.browser,
+        screenResolution: record.screenResolution,
+        timezone: record.timezone,
+        userAgent: record.userAgent,
+        loginMethod
+      })
+    );
+
+    // 2. Also update latest device summary + bounded array on users/{uid} (never resurrect deleted accounts)
+    try {
+      const userRef = doc(db, 'users', profile.uid);
+      const userSnap = await getDoc(userRef);
+      if (userSnap.exists()) {
+        const existingData = userSnap.data() as UserProfile;
+        const existingLogins = Array.isArray(existingData.deviceLogins) ? existingData.deviceLogins : [];
+        const updatedLogins = [record, ...existingLogins].slice(0, 100);
+        await updateDoc(userRef, {
+          lastLoginAt: now,
+          lastDeviceName: record.deviceName,
+          lastDeviceType: record.deviceType,
+          deviceLogins: updatedLogins,
+          isOnline: true,
+          lastSeen: now,
+          updatedAt: now
+        });
+      }
+    } catch {
+      // Ignore if account no longer exists
+    }
+  } catch (err) {
+    console.warn('recordCustomerDeviceLogin notice:', err);
+  }
+}
+
+export function buildAllCustomerDeviceLogins(
+  customers: UserProfile[],
+  auditLogs: AuditLog[]
+): DeviceLoginRecord[] {
+  const customerById = new Map<string, UserProfile>();
+  const customerByEmail = new Map<string, UserProfile>();
+  for (const c of customers) {
+    customerById.set(c.uid, c);
+    if (c.email) {
+      customerByEmail.set(c.email.toLowerCase().trim(), c);
+    }
+  }
+
+  const records: DeviceLoginRecord[] = [];
+  const seenKeys = new Set<string>();
+
+  const pushUnique = (rec: DeviceLoginRecord) => {
+    const tsBucket = Math.floor(new Date(rec.loggedInAt).getTime() / 5000);
+    const dedupeKey = `${rec.customerId}|${rec.deviceName}|${tsBucket}`;
+    if (seenKeys.has(dedupeKey)) return;
+    seenKeys.add(dedupeKey);
+    records.push(rec);
+  };
+
+  // 1. Primary source: immutable customer_device_login logs from audit_logs
+  for (const log of auditLogs) {
+    if (log.action === 'customer_device_login') {
+      const cust =
+        (log.targetId ? customerById.get(log.targetId) : undefined) ||
+        (log.customerEmail ? customerByEmail.get(log.customerEmail.toLowerCase().trim()) : undefined);
+
+      const customerId = cust?.uid || log.targetId || log.customerEmail || log.id;
+      const customerName = cust?.fullName || log.customerName || log.performedBy || 'Customer';
+      const customerEmail = cust?.email || log.customerEmail || '';
+
+      pushUnique({
+        id: log.id,
+        customerId,
+        customerName,
+        customerEmail,
+        deviceName: log.deviceName || 'Web Browser Device',
+        deviceType: log.deviceType || 'Desktop / Laptop',
+        deviceModel: log.deviceModel,
+        os: log.os,
+        browser: log.browser,
+        screenResolution: log.screenResolution,
+        timezone: log.timezone,
+        userAgent: log.userAgent,
+        loginMethod: log.loginMethod || 'Login',
+        loggedInAt: log.timestamp,
+        isHistorical: false
+      });
+    }
+  }
+
+  // 2. Secondary source: embedded deviceLogins array on each customer profile
+  for (const cust of customers) {
+    if (Array.isArray(cust.deviceLogins)) {
+      for (const dev of cust.deviceLogins) {
+        if (!dev?.loggedInAt) continue;
+        pushUnique({
+          ...dev,
+          customerId: cust.uid,
+          customerName: cust.fullName || dev.customerName || 'Customer',
+          customerEmail: cust.email || dev.customerEmail || ''
+        });
+      }
+    }
+  }
+
+  // 3. Historical sessions since website creation (pre-device-tracking registrations / past activity)
+  for (const log of auditLogs) {
+    if (log.action === 'customer_registered') {
+      const cust =
+        (log.targetId ? customerById.get(log.targetId) : undefined) ||
+        customers.find(c => log.details?.toLowerCase().includes((c.email || '').toLowerCase().trim()));
+      const customerId = cust?.uid || log.targetId || log.id;
+      const customerName = cust?.fullName || log.performedBy || 'Customer';
+      const customerEmail = cust?.email || '';
+
+      // Only add as historical entry if no detailed device login already exists within 60 seconds
+      const regTs = new Date(log.timestamp).getTime();
+      const hasDetailedNear = records.some(
+        (r) => r.customerId === customerId && Math.abs(new Date(r.loggedInAt).getTime() - regTs) < 60000
+      );
+      if (!hasDetailedNear) {
+        pushUnique({
+          id: `hist_reg_${log.id}`,
+          customerId,
+          customerName,
+          customerEmail,
+          deviceName: 'Legacy Web Session (Account Registration — Before Device Tracking)',
+          deviceType: 'Historical Session',
+          loginMethod: 'Account Registration',
+          loggedInAt: log.timestamp,
+          isHistorical: true
+        });
+      }
+    }
+  }
+
+  // 4. Include customer profile createdAt / lastSeen historical records if not already covered
+  for (const cust of customers) {
+    const custRecords = records.filter(r => r.customerId === cust.uid);
+
+    if (cust.lastSeen) {
+      const lastSeenTs = new Date(cust.lastSeen).getTime();
+      const hasCloseRecord = custRecords.some(
+        r => Math.abs(new Date(r.loggedInAt).getTime() - lastSeenTs) < 15 * 60 * 1000
+      );
+      if (!hasCloseRecord && Number.isFinite(lastSeenTs)) {
+        pushUnique({
+          id: `hist_seen_${cust.uid}`,
+          customerId: cust.uid,
+          customerName: cust.fullName || 'Customer',
+          customerEmail: cust.email || '',
+          deviceName: cust.lastDeviceName || 'Earlier Logged Session (Prior to Device Name Capture)',
+          deviceType: (cust.lastDeviceType as DeviceLoginRecord['deviceType']) || 'Historical Session',
+          loginMethod: 'Previous Active Session',
+          loggedInAt: cust.lastSeen,
+          isHistorical: !cust.lastDeviceName
+        });
+      }
+    }
+
+    if (cust.createdAt) {
+      const createdTs = new Date(cust.createdAt).getTime();
+      const hasCreationRecord = records.some(
+        r => r.customerId === cust.uid && Math.abs(new Date(r.loggedInAt).getTime() - createdTs) < 15 * 60 * 1000
+      );
+      if (!hasCreationRecord && Number.isFinite(createdTs)) {
+        pushUnique({
+          id: `hist_created_${cust.uid}`,
+          customerId: cust.uid,
+          customerName: cust.fullName || 'Customer',
+          customerEmail: cust.email || '',
+          deviceName: 'Initial Account Creation Session (Legacy)',
+          deviceType: 'Historical Session',
+          loginMethod: 'Initial Account Created',
+          loggedInAt: cust.createdAt,
+          isHistorical: true
+        });
+      }
+    }
+  }
+
+  return records.sort((a, b) => new Date(b.loggedInAt).getTime() - new Date(a.loggedInAt).getTime());
 }
 
 /* ---------------- INITIAL SEED DATA FOR DEMO & TESTING ---------------- */

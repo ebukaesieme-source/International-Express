@@ -29,7 +29,8 @@ import {
   deleteUserDocOnly,
   isAccountDeleted,
   unmarkAccountDeleted,
-  addAuditLog
+  addAuditLog,
+  recordCustomerDeviceLogin
 } from '../services/cargoService';
 
 interface RegisterData {
@@ -240,6 +241,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
               markSessionActive();
               setUserProfile(profile);
+              if (profile.role === 'customer' && !safeGetSession(`iec_device_logged_${profile.uid}`)) {
+                safeSetSession(`iec_device_logged_${profile.uid}`, '1');
+                recordCustomerDeviceLogin(profile, 'Active Session Restored').catch(() => {});
+              }
               return;
             }
           }
@@ -349,6 +354,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       safeSetSession('iec_demo_uid', profile.uid);
       safeSetSession('iec_demo_role', profile.role);
       setUserProfile(profile);
+      if (profile.role === 'customer' && (throwOnGeoBlock || !safeGetSession(`iec_device_logged_${profile.uid}`))) {
+        safeSetSession(`iec_device_logged_${profile.uid}`, '1');
+        recordCustomerDeviceLogin(profile, throwOnGeoBlock ? 'Sign In' : 'Active Session').catch(() => {});
+      }
     } catch (err) {
       if (err instanceof GeoAccessError && throwOnGeoBlock) {
         throw err;
@@ -454,6 +463,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             safeSetSession('iec_demo_uid', match.uid);
             safeSetSession('iec_demo_role', match.role);
             setUserProfile(match);
+            if (match.role === 'customer') {
+              safeSetSession(`iec_device_logged_${match.uid}`, '1');
+              recordCustomerDeviceLogin(match, 'Email & Password').catch(() => {});
+            }
             return;
           } else {
             // Password was explicitly set/updated in Firestore (e.g. by Super Admin) — NEVER fall through
@@ -517,6 +530,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         safeSetSession('iec_demo_uid', 'customer_demo_1');
         safeSetSession('iec_demo_role', 'customer');
         setUserProfile(demoCust);
+        safeSetSession(`iec_device_logged_${demoCust.uid}`, '1');
+        recordCustomerDeviceLogin(demoCust, 'Email & Password').catch(() => {});
         return;
       }
 
@@ -592,6 +607,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUserProfile(profile);
       safeSetSession('iec_demo_uid', uid);
       safeSetSession('iec_demo_role', 'customer');
+      safeSetSession(`iec_device_logged_${uid}`, '1');
+      recordCustomerDeviceLogin(profile, 'New Account Registration').catch(() => {});
 
       await addAuditLog(
         'customer_registered',
@@ -650,6 +667,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         safeSetSession('iec_demo_uid', profile.uid);
         safeSetSession('iec_demo_role', 'customer');
         setUserProfile(profile);
+        safeSetSession(`iec_device_logged_${profile.uid}`, '1');
+        recordCustomerDeviceLogin(profile, 'Quick Access Login').catch(() => {});
       }
   };
 
@@ -731,6 +750,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Immediately clear session state and storage so logout never blocks on network calls
     lastActivityMemoryRef.current = 0;
     safeRemoveLocal(ACTIVITY_STORAGE_KEY);
+    if (uidToOffline) {
+      safeRemoveSession(`iec_device_logged_${uidToOffline}`);
+    }
     safeRemoveSession('iec_demo_uid');
     safeRemoveSession('iec_demo_role');
     safeRemoveSession('iec_active_tab');

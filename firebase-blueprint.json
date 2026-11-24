@@ -16,6 +16,9 @@
         "assignedSubAdminName": { "type": "string" },
         "isSuspended": { "type": "boolean" },
         "usaOnlyLogin": { "type": "boolean" },
+        "lastLoginAt": { "type": "string" },
+        "lastDeviceName": { "type": "string" },
+        "lastDeviceType": { "type": "string" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
       },
@@ -126,6 +129,7 @@
         "editedAt": { "type": "string" },
         "editedBy": { "type": "string" },
         "originalText": { "type": "string" },
+        "showOriginalToCustomer": { "type": "boolean" },
         "isDeleted": { "type": "boolean" },
         "deletedAt": { "type": "string" },
         "deletedBy": { "type": "string" },
@@ -177,7 +181,17 @@
         "performedByRole": { "type": "string" },
         "targetId": { "type": "string" },
         "details": { "type": "string" },
-        "timestamp": { "type": "string" }
+        "timestamp": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "customerName": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "deviceType": { "type": "string" },
+        "deviceModel": { "type": "string" },
+        "os": { "type": "string" },
+        "browser": { "type": "string" },
+        "screenResolution": { "type": "string" },
+        "timezone": { "type": "string" },
+        "loginMethod": { "type": "string" }
       },
       "required": ["action", "performedBy", "performedByRole", "timestamp"]
     }

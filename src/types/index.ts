@@ -24,9 +24,31 @@ export interface UserProfile {
   passwordUpdatedAt?: string;
   isOnline?: boolean;
   lastSeen?: string;
+  lastLoginAt?: string;
+  lastDeviceName?: string;
+  lastDeviceType?: string;
+  deviceLogins?: DeviceLoginRecord[];
   usaOnlyLogin?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DeviceLoginRecord {
+  id: string;
+  customerId: string;
+  customerName: string;
+  customerEmail: string;
+  deviceName: string;
+  deviceType: 'Mobile Phone' | 'Tablet' | 'Desktop / Laptop' | 'Historical Session';
+  deviceModel?: string;
+  os?: string;
+  browser?: string;
+  screenResolution?: string;
+  timezone?: string;
+  userAgent?: string;
+  loginMethod?: string;
+  loggedInAt: string;
+  isHistorical?: boolean;
 }
 
 export type ShipmentStatus =
@@ -195,6 +217,7 @@ export interface ChatMessage {
   editedAt?: string;
   editedBy?: string;
   originalText?: string;
+  showOriginalToCustomer?: boolean;
   isDeleted?: boolean;
   deletedAt?: string;
   deletedBy?: string;
@@ -241,4 +264,15 @@ export interface AuditLog {
   targetType?: string;
   details: string;
   timestamp: string;
+  customerEmail?: string;
+  customerName?: string;
+  deviceName?: string;
+  deviceType?: 'Mobile Phone' | 'Tablet' | 'Desktop / Laptop' | 'Historical Session';
+  deviceModel?: string;
+  os?: string;
+  browser?: string;
+  screenResolution?: string;
+  timezone?: string;
+  userAgent?: string;
+  loginMethod?: string;
 }
