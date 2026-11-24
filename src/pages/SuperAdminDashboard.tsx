@@ -190,9 +190,11 @@ export const SuperAdminDashboard: React.FC = () => {
   const [showTransferModal, setShowTransferModal] = useState<UserProfile | null>(null);
   const [transferTargetSubAdmin, setTransferTargetSubAdmin] = useState('');
 
-  // Delete User Confirmation Modal & Toast states
+  // Delete User & Delete Shipment Confirmation Modal & Toast states
   const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
+  const [shipmentToDelete, setShipmentToDelete] = useState<Shipment | null>(null);
+  const [isDeletingShipment, setIsDeletingShipment] = useState(false);
   const [toastNotification, setToastNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
@@ -739,27 +741,38 @@ export const SuperAdminDashboard: React.FC = () => {
         'super_admin',
         `Super Admin updated global announcement: "${announcementText}"`
       );
-      alert('Global Announcement broadcasted successfully!');
+      showToast('Global Announcement broadcasted successfully!');
     } catch (err) {
       console.error(err);
-      alert('Failed to save announcement.');
+      showToast('Failed to save announcement.', 'error');
     }
   };
 
-  const handleDeleteShipment = async (s: Shipment) => {
-    if (!confirm(`Permanently remove shipment record ${s.trackingNumber}?`)) return;
+  const handleDeleteShipment = (s: Shipment) => {
+    setShipmentToDelete(s);
+  };
+
+  const handleConfirmDeleteShipment = async () => {
+    if (!shipmentToDelete || isDeletingShipment) return;
+    const s = shipmentToDelete;
+    setIsDeletingShipment(true);
     try {
       await deleteShipment(s.id);
+      setShipments(prev => prev.filter(item => item.id !== s.id));
       await addAuditLog(
         'shipment_deleted',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
         `Super Admin deleted consignment record ${s.trackingNumber}`
-      );
+      ).catch(() => {});
+      setShipmentToDelete(null);
+      showToast(`Shipment record ${s.trackingNumber} permanently deleted.`);
       loadAllData();
     } catch (err) {
       console.error(err);
-      alert('Failed to delete shipment.');
+      showToast('Failed to delete shipment.', 'error');
+    } finally {
+      setIsDeletingShipment(false);
     }
   };
 
@@ -3277,6 +3290,58 @@ export const SuperAdminDashboard: React.FC = () => {
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{isDeletingUser ? 'Deleting Account...' : 'Yes, Permanently Delete'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE SHIPMENT CONFIRMATION MODAL */}
+      {shipmentToDelete && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 animate-fadeIn"
+          onClick={() => !isDeletingShipment && setShipmentToDelete(null)}
+        >
+          <div
+            className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-gray-100 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center space-x-3 text-red-600">
+              <div className="w-12 h-12 rounded-2xl bg-red-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-base text-gray-900">
+                  Delete Shipment Record?
+                </h3>
+                <p className="text-xs text-red-600 font-bold uppercase tracking-wider font-mono">
+                  {shipmentToDelete.trackingNumber}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 border border-gray-200 rounded-2xl text-xs space-y-1.5">
+              <div>Recipient: <strong className="text-gray-900">{shipmentToDelete.recipientName || shipmentToDelete.customerName}</strong></div>
+              <div>Route: <strong className="text-gray-900">{shipmentToDelete.departureLocation} → {shipmentToDelete.destinationLocation}</strong></div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2.5 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                disabled={isDeletingShipment}
+                onClick={() => setShipmentToDelete(null)}
+                className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingShipment}
+                onClick={handleConfirmDeleteShipment}
+                className="px-5 py-2 text-xs font-black text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-xl shadow-md cursor-pointer transition-colors flex items-center space-x-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeletingShipment ? 'Deleting...' : 'Yes, Delete Shipment'}</span>
               </button>
             </div>
           </div>
