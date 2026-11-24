@@ -11,7 +11,8 @@ import {
   Globe,
   User,
   X,
-  CheckCircle2
+  CheckCircle2,
+  ListChecks
 } from 'lucide-react';
 import { DeviceLoginRecord, UserProfile } from '../types';
 import {
@@ -28,6 +29,21 @@ interface CustomerDeviceHistoryPanelProps {
 }
 
 type TimeUnit = 'hours' | 'days';
+
+interface UniqueDeviceEntry {
+  deviceName: string;
+  deviceType: DeviceLoginRecord['deviceType'];
+  os?: string;
+  browser?: string;
+  screenResolution?: string;
+  timezone?: string;
+  count: number;
+  lastLoggedInAt: string;
+  firstLoggedInAt: string;
+  customerId: string;
+  customerName: string;
+  customerEmail: string;
+}
 
 function toHours(valueStr: string, unit: TimeUnit): number | null {
   const trimmed = valueStr.trim();
@@ -54,11 +70,14 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
 
   const [deviceSearch, setDeviceSearch] = useState<string>('');
   const [deviceTypeFilter, setDeviceTypeFilter] = useState<string>('all');
+  const [selectedDeviceHighlight, setSelectedDeviceHighlight] = useState<string>('');
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   useEffect(() => {
     if (lockedCustomer) {
       setSelectedCustomerId(lockedCustomer.uid);
+      setDeviceSearch('');
+      setSelectedDeviceHighlight('');
     }
   }, [lockedCustomer]);
 
@@ -68,6 +87,13 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
     return () => clearInterval(timer);
   }, []);
 
+  const handleSelectCustomer = (newCustomerId: string) => {
+    setSelectedCustomerId(newCustomerId);
+    // Clear stale device search/selection so switching customers always shows that customer's full device list
+    setDeviceSearch('');
+    setSelectedDeviceHighlight('');
+  };
+
   const activeCustomerId = lockedCustomer ? lockedCustomer.uid : selectedCustomerId;
 
   const customerScopedLogins = useMemo(() => {
@@ -76,17 +102,18 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
   }, [allDeviceLogins, activeCustomerId]);
 
   // Compute normalized [minHoursAgo, maxHoursAgo] bounds automatically.
-  // If user fills ONLY "From" (e.g. "7 hours"), treat it as "within last 7 hours" (0 to 7 hrs ago)
-  // unless "To" is also filled (e.g. "10 hours ago to 3 days ago" -> between 10h and 72h ago).
   const timeRangeBounds = useMemo(() => {
     const fromH = toHours(fromValue, fromUnit);
     const toH = toHours(toValue, toUnit);
 
     if (fromH === null && toH === null) {
-      return { minHours: null as number | null, maxHours: null as number | null, label: 'All Time (Since Website Launch)' };
+      return {
+        minHours: null as number | null,
+        maxHours: null as number | null,
+        label: 'All Time (Ever Since Account Opened)'
+      };
     }
     if (fromH !== null && toH === null) {
-      // Single input entered (e.g. "7 hours ago") -> show devices within last 7 hours (0 to 7 hrs ago)
       return {
         minHours: 0,
         maxHours: fromH,
@@ -94,7 +121,6 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
       };
     }
     if (fromH === null && toH !== null) {
-      // Only "To" entered -> within last toH hours
       return {
         minHours: 0,
         maxHours: toH,
@@ -102,7 +128,6 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
       };
     }
 
-    // Both From and To entered (e.g. 10 hours ago to 3 days ago, or even reversed 3 days to 10 hours)
     const minH = Math.min(fromH!, toH!);
     const maxH = Math.max(fromH!, toH!);
     return {
@@ -117,6 +142,10 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
 
     return customerScopedLogins.filter((rec) => {
       if (deviceTypeFilter !== 'all' && rec.deviceType !== deviceTypeFilter) {
+        return false;
+      }
+
+      if (selectedDeviceHighlight && rec.deviceName !== selectedDeviceHighlight) {
         return false;
       }
 
@@ -147,38 +176,41 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
 
       return true;
     });
-  }, [customerScopedLogins, deviceTypeFilter, timeRangeBounds, deviceSearch, nowMs]);
+  }, [customerScopedLogins, deviceTypeFilter, selectedDeviceHighlight, timeRangeBounds, deviceSearch, nowMs]);
 
-  // The most recent (last) device that logged in within the active filter/time range
-  const lastMatchingDevice = filteredLogins[0] || null;
+  // Complete list of EVERY unique device name ever logged into the selected customer(s)
+  // with each device's exact LAST time logged in & first time logged in (respects time range + search,
+  // and falls back to all-time per-customer device directory so every device since opening is always visible!)
+  const buildUniqueDeviceEntries = (records: DeviceLoginRecord[]): UniqueDeviceEntry[] => {
+    const map = new Map<string, UniqueDeviceEntry>();
 
-  // Aggregate unique device names used across the filtered history
-  const uniqueDevicesSummary = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        deviceName: string;
-        deviceType: DeviceLoginRecord['deviceType'];
-        count: number;
-        lastLoggedInAt: string;
-        firstLoggedInAt: string;
-      }
-    >();
-
-    for (const rec of filteredLogins) {
-      const existing = map.get(rec.deviceName);
+    for (const rec of records) {
+      // Group per customer + deviceName when viewing all customers, or per deviceName for a single customer
+      const key = activeCustomerId === 'all' ? `${rec.customerId}::${rec.deviceName}` : rec.deviceName;
+      const existing = map.get(key);
       if (!existing) {
-        map.set(rec.deviceName, {
+        map.set(key, {
           deviceName: rec.deviceName,
           deviceType: rec.deviceType,
+          os: rec.os,
+          browser: rec.browser,
+          screenResolution: rec.screenResolution,
+          timezone: rec.timezone,
           count: 1,
           lastLoggedInAt: rec.loggedInAt,
-          firstLoggedInAt: rec.loggedInAt
+          firstLoggedInAt: rec.loggedInAt,
+          customerId: rec.customerId,
+          customerName: rec.customerName,
+          customerEmail: rec.customerEmail
         });
       } else {
         existing.count += 1;
         if (new Date(rec.loggedInAt).getTime() > new Date(existing.lastLoggedInAt).getTime()) {
           existing.lastLoggedInAt = rec.loggedInAt;
+          if (rec.os) existing.os = rec.os;
+          if (rec.browser) existing.browser = rec.browser;
+          if (rec.screenResolution) existing.screenResolution = rec.screenResolution;
+          if (rec.timezone) existing.timezone = rec.timezone;
         }
         if (new Date(rec.loggedInAt).getTime() < new Date(existing.firstLoggedInAt).getTime()) {
           existing.firstLoggedInAt = rec.loggedInAt;
@@ -189,7 +221,22 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
     return Array.from(map.values()).sort(
       (a, b) => new Date(b.lastLoggedInAt).getTime() - new Date(a.lastLoggedInAt).getTime()
     );
-  }, [filteredLogins]);
+  };
+
+  // All-time unique devices for the currently selected customer (never hidden unless cleared/changed)
+  const allTimeDevicesForSelection = useMemo(
+    () => buildUniqueDeviceEntries(customerScopedLogins),
+    [customerScopedLogins, activeCustomerId]
+  );
+
+  // Filtered unique devices matching current hours/days range & brand search
+  const filteredUniqueDevices = useMemo(
+    () => buildUniqueDeviceEntries(filteredLogins),
+    [filteredLogins, activeCustomerId]
+  );
+
+  // The most recent (last) device that logged in within the active filter/time range
+  const lastMatchingDevice = filteredLogins[0] || null;
 
   const renderDeviceIcon = (type: DeviceLoginRecord['deviceType'], sizeClass = 'w-4 h-4') => {
     if (type === 'Mobile Phone') return <Smartphone className={`${sizeClass} text-blue-600 shrink-0`} />;
@@ -210,31 +257,40 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
     setFromUnit(fUnit);
     setToValue(tVal);
     setToUnit(tUnit);
+    setSelectedDeviceHighlight('');
   };
 
-  const clearTimeRange = () => {
+  const clearAllFilters = () => {
     setFromValue('');
     setFromUnit('hours');
     setToValue('');
     setToUnit('hours');
+    setDeviceSearch('');
+    setDeviceTypeFilter('all');
+    setSelectedDeviceHighlight('');
   };
 
   const activeCustomerObj =
     lockedCustomer || customers.find((c) => c.uid === activeCustomerId) || null;
 
   const hasAnyRangeInput = Boolean(fromValue.trim() || toValue.trim());
+  const hasAnyActiveFilter = Boolean(
+    hasAnyRangeInput || deviceSearch.trim() || deviceTypeFilter !== 'all' || selectedDeviceHighlight
+  );
+
+  const devicesTableToDisplay = hasAnyActiveFilter ? filteredUniqueDevices : allTimeDevicesForSelection;
 
   return (
     <div className="space-y-4">
       {/* Top Stats Strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
         <div className="p-3 rounded-2xl bg-slate-50 border border-gray-200">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Logins in Range</div>
+          <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Logins Shown</div>
           <div className="text-lg font-extrabold text-gray-900 mt-0.5">{filteredLogins.length}</div>
         </div>
         <div className="p-3 rounded-2xl bg-blue-50/70 border border-blue-200">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Unique Devices</div>
-          <div className="text-lg font-extrabold text-blue-900 mt-0.5">{uniqueDevicesSummary.length}</div>
+          <div className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Unique Devices Ever</div>
+          <div className="text-lg font-extrabold text-blue-900 mt-0.5">{allTimeDevicesForSelection.length}</div>
         </div>
         <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-200">
           <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Phones & Tablets</div>
@@ -243,7 +299,7 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
           </div>
         </div>
         <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800">All-Time Total</div>
+          <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800">All-Time Logins</div>
           <div className="text-lg font-extrabold text-amber-950 mt-0.5">{customerScopedLogins.length}</div>
         </div>
       </div>
@@ -255,19 +311,20 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
           {!lockedCustomer && (
             <div className="lg:col-span-4">
               <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-500 mb-1">
-                Individual Customer
+                Individual Customer Account
               </label>
               <select
                 value={selectedCustomerId}
-                onChange={(e) => setSelectedCustomerId(e.target.value)}
+                onChange={(e) => handleSelectCustomer(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-800 focus:outline-blue-600 cursor-pointer"
               >
                 <option value="all">All Customers ({customers.length})</option>
                 {customers.map((c) => {
-                  const count = allDeviceLogins.filter((r) => r.customerId === c.uid).length;
+                  const custRecords = allDeviceLogins.filter((r) => r.customerId === c.uid);
+                  const uniqueCount = new Set(custRecords.map((r) => r.deviceName)).size;
                   return (
                     <option key={c.uid} value={c.uid}>
-                      {c.fullName} ({c.email}) — {count} login{count === 1 ? '' : 's'}
+                      {c.fullName} ({c.email}) — {uniqueCount} device{uniqueCount === 1 ? '' : 's'} / {custRecords.length} login{custRecords.length === 1 ? '' : 's'}
                     </option>
                   );
                 })}
@@ -329,7 +386,7 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
               {hasAnyRangeInput && (
                 <button
                   type="button"
-                  onClick={clearTimeRange}
+                  onClick={() => applyRangePreset('', 'hours', '', 'hours')}
                   className="p-2 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-700 cursor-pointer shrink-0"
                   title="Clear time range"
                 >
@@ -349,7 +406,10 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
               <input
                 type="text"
                 value={deviceSearch}
-                onChange={(e) => setDeviceSearch(e.target.value)}
+                onChange={(e) => {
+                  setDeviceSearch(e.target.value);
+                  if (selectedDeviceHighlight) setSelectedDeviceHighlight('');
+                }}
                 placeholder="Nokia, iPhone, Samsung, Dell, PC..."
                 className="w-full pl-8 pr-8 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-800 focus:outline-blue-600"
               />
@@ -404,17 +464,28 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
             })}
           </div>
 
-          <select
-            value={deviceTypeFilter}
-            onChange={(e) => setDeviceTypeFilter(e.target.value)}
-            className="px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-[11px] font-bold text-gray-700 cursor-pointer"
-          >
-            <option value="all">All Device Types</option>
-            <option value="Mobile Phone">Mobile Phones</option>
-            <option value="Tablet">Tablets</option>
-            <option value="Desktop / Laptop">Desktop / Laptop PCs</option>
-            <option value="Historical Session">Historical Sessions (Legacy)</option>
-          </select>
+          <div className="flex items-center gap-2">
+            {hasAnyActiveFilter && (
+              <button
+                type="button"
+                onClick={clearAllFilters}
+                className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 cursor-pointer"
+              >
+                Reset Filters
+              </button>
+            )}
+            <select
+              value={deviceTypeFilter}
+              onChange={(e) => setDeviceTypeFilter(e.target.value)}
+              className="px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-[11px] font-bold text-gray-700 cursor-pointer"
+            >
+              <option value="all">All Device Types</option>
+              <option value="Mobile Phone">Mobile Phones</option>
+              <option value="Tablet">Tablets</option>
+              <option value="Desktop / Laptop">Desktop / Laptop PCs</option>
+              <option value="Historical Session">Historical Sessions (Legacy)</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -433,111 +504,192 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
             </span>
           </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center space-x-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shrink-0 shadow-xs">
-                {renderDeviceIcon(lastMatchingDevice.deviceType, 'w-5 h-5')}
+          <div className="flex items-center space-x-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shrink-0 shadow-xs">
+              {renderDeviceIcon(lastMatchingDevice.deviceType, 'w-5 h-5')}
+            </div>
+            <div className="min-w-0">
+              <div className="font-black text-sm sm:text-base text-white break-words">
+                {lastMatchingDevice.deviceName}
               </div>
-              <div className="min-w-0">
-                <div className="font-black text-sm sm:text-base text-white break-words">
-                  {lastMatchingDevice.deviceName}
-                </div>
-                <div className="text-[11px] text-indigo-200 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 mt-0.5">
-                  <span className="font-bold text-white">{lastMatchingDevice.customerName}</span>
-                  <span>• {lastMatchingDevice.deviceType}</span>
-                  <span>• {formatExactDateTime(lastMatchingDevice.loggedInAt).full}</span>
-                </div>
+              <div className="text-[11px] text-indigo-200 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 mt-0.5">
+                <span className="font-bold text-white">{lastMatchingDevice.customerName}</span>
+                <span>• {lastMatchingDevice.deviceType}</span>
+                <span>• Last Logged: {formatExactDateTime(lastMatchingDevice.loggedInAt).full}</span>
               </div>
             </div>
-          </div>
-
-          {uniqueDevicesSummary.length > 1 && (
-            <div className="pt-2 border-t border-white/15 text-[11px] text-indigo-100 flex flex-wrap items-center gap-1.5">
-              <span className="font-bold text-indigo-300 mr-1">
-                All {uniqueDevicesSummary.length} devices in this range:
-              </span>
-              {uniqueDevicesSummary.map((d) => (
-                <span
-                  key={d.deviceName}
-                  className="px-2 py-0.5 rounded-md bg-white/10 border border-white/15 text-[10px] font-bold text-white"
-                >
-                  {d.deviceName} ({d.count}x)
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* All Recorded Device Names Summary Pills */}
-      {uniqueDevicesSummary.length > 0 && (
-        <div className="p-3.5 rounded-2xl bg-white border border-gray-200 space-y-2">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h4 className="text-xs font-extrabold text-gray-900">
-              Device Names Found {activeCustomerObj ? `for ${activeCustomerObj.fullName}` : '(All Customers)'}
-            </h4>
-            <span className="text-[10px] font-bold text-gray-500">
-              {uniqueDevicesSummary.length} unique device{uniqueDevicesSummary.length === 1 ? '' : 's'} • Click any device to filter
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {uniqueDevicesSummary.map((d) => (
-              <button
-                key={d.deviceName}
-                type="button"
-                onClick={() => setDeviceSearch(deviceSearch === d.deviceName ? '' : d.deviceName)}
-                className={`inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-bold transition-all cursor-pointer ${
-                  deviceSearch === d.deviceName
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-slate-50 hover:bg-blue-50 text-gray-800 border-gray-200'
-                }`}
-                title={`Last logged in: ${formatHoursAgoLabel(d.lastLoggedInAt, nowMs)}`}
-              >
-                {renderDeviceIcon(d.deviceType)}
-                <span className="truncate max-w-[280px]">{d.deviceName}</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded-md text-[9px] font-black ${
-                    deviceSearch === d.deviceName
-                      ? 'bg-white/20 text-white'
-                      : 'bg-white text-gray-600 border border-gray-200'
-                  }`}
-                >
-                  {d.count}x
-                </span>
-              </button>
-            ))}
           </div>
         </div>
       )}
 
-      {/* Chronological Device Login Timeline (Newest -> Oldest since website launch) */}
-      <div className="space-y-2.5">
-        {filteredLogins.length === 0 ? (
-          <div className="text-center py-10 px-4 bg-slate-50 border border-dashed border-gray-300 rounded-2xl space-y-2">
-            <Clock className="w-8 h-8 text-gray-300 mx-auto" />
-            <p className="text-xs font-bold text-gray-700">
-              No device logins found for <span className="text-blue-700">{timeRangeBounds.label}</span>
-              {deviceSearch ? ` matching "${deviceSearch}"` : ''}.
-            </p>
-            <p className="text-[11px] text-gray-500">
-              Adjust your hours/days range or click <strong>All Time</strong> to list every device since website launch.
-            </p>
-            {(hasAnyRangeInput || deviceSearch || deviceTypeFilter !== 'all') && (
+      {/* DEDICATED LIST: ALL DEVICES THAT HAVE EVER LOGGED INTO THIS CUSTOMER ACCOUNT + LAST TIME EACH DEVICE LOGGED IN */}
+      <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-2xs">
+        <div className="px-4 py-3 bg-slate-50 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center space-x-2 min-w-0">
+            <ListChecks className="w-4 h-4 text-indigo-600 shrink-0" />
+            <div className="min-w-0">
+              <h4 className="text-xs sm:text-sm font-black text-gray-900 truncate">
+                All Devices Logged Into{' '}
+                {activeCustomerObj ? activeCustomerObj.fullName : 'All Customer Accounts'}{' '}
+                (Ever Since Opened)
+              </h4>
+              <p className="text-[11px] text-gray-500">
+                Every device name recorded for this account, total logins, and the exact last date &amp; time each device logged in.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {selectedDeviceHighlight && (
               <button
                 type="button"
-                onClick={() => {
-                  clearTimeRange();
-                  setDeviceSearch('');
-                  setDeviceTypeFilter('all');
-                }}
-                className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer"
+                onClick={() => setSelectedDeviceHighlight('')}
+                className="px-2.5 py-1 rounded-lg bg-blue-600 text-white text-[10px] font-bold inline-flex items-center space-x-1 cursor-pointer"
               >
-                Reset Filters & Show All Devices
+                <span>Showing selected device</span>
+                <X className="w-3 h-3" />
               </button>
             )}
+            <span className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-800 border border-indigo-200 text-[11px] font-extrabold">
+              {devicesTableToDisplay.length} Device{devicesTableToDisplay.length === 1 ? '' : 's'}
+            </span>
+          </div>
+        </div>
+
+        {devicesTableToDisplay.length === 0 ? (
+          <div className="text-center py-8 px-4 space-y-2">
+            <p className="text-xs font-bold text-gray-700">
+              No devices match the current filter ({timeRangeBounds.label}
+              {deviceSearch ? `, search "${deviceSearch}"` : ''}).
+            </p>
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer"
+            >
+              Reset Filters &amp; Show All Devices
+            </button>
           </div>
         ) : (
-          filteredLogins.map((rec, idx) => {
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50/70 text-gray-500 uppercase tracking-wider text-[10px] border-b border-gray-100">
+                <tr>
+                  <th className="py-2.5 px-4">Device Name &amp; Type</th>
+                  {!lockedCustomer && activeCustomerId === 'all' && (
+                    <th className="py-2.5 px-4">Customer Account</th>
+                  )}
+                  <th className="py-2.5 px-4">Last Time Logged In</th>
+                  <th className="py-2.5 px-4">First Logged In</th>
+                  <th className="py-2.5 px-4 text-right">Logins</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {devicesTableToDisplay.map((d, idx) => {
+                  const lastDt = formatExactDateTime(d.lastLoggedInAt);
+                  const firstDt = formatExactDateTime(d.firstLoggedInAt);
+                  const lastHrsLabel = formatHoursAgoLabel(d.lastLoggedInAt, nowMs);
+                  const exactHrs = getHoursAgo(d.lastLoggedInAt, nowMs);
+                  const isHighlighted = selectedDeviceHighlight === d.deviceName;
+
+                  return (
+                    <tr
+                      key={`${d.customerId}-${d.deviceName}-${idx}`}
+                      onClick={() =>
+                        setSelectedDeviceHighlight(isHighlighted ? '' : d.deviceName)
+                      }
+                      className={`transition-colors cursor-pointer ${
+                        isHighlighted ? 'bg-blue-50/90' : 'hover:bg-slate-50'
+                      }`}
+                      title="Click row to filter the login log below by this device"
+                    >
+                      <td className="py-3 px-4">
+                        <div className="flex items-start space-x-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-slate-100 border border-gray-200 flex items-center justify-center shrink-0 mt-0.5">
+                            {renderDeviceIcon(d.deviceType)}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-extrabold text-gray-900 break-words flex items-center flex-wrap gap-1.5">
+                              <span>{d.deviceName}</span>
+                              {idx === 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-indigo-600 text-white text-[9px] font-black uppercase">
+                                  Latest
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center flex-wrap gap-1.5 mt-1">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-extrabold border ${getDeviceTypeBadgeClass(
+                                  d.deviceType
+                                )}`}
+                              >
+                                {d.deviceType}
+                              </span>
+                              {d.os && (
+                                <span className="text-[10px] text-gray-500">OS: {d.os}</span>
+                              )}
+                              {d.browser && (
+                                <span className="text-[10px] text-gray-500">• {d.browser}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      {!lockedCustomer && activeCustomerId === 'all' && (
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-gray-900">{d.customerName}</div>
+                          <div className="text-[10px] text-gray-500 font-mono">{d.customerEmail}</div>
+                        </td>
+                      )}
+
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <div className="font-bold text-gray-900">
+                          {lastDt.date} • {lastDt.time}
+                        </div>
+                        <span
+                          className={`mt-1 inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-extrabold border ${
+                            exactHrs <= 1
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : exactHrs <= 24
+                              ? 'bg-blue-50 text-blue-700 border-blue-200'
+                              : 'bg-slate-100 text-slate-700 border-slate-200'
+                          }`}
+                        >
+                          <Clock className="w-2.5 h-2.5" />
+                          <span>{lastHrsLabel}</span>
+                        </span>
+                      </td>
+
+                      <td className="py-3 px-4 whitespace-nowrap text-gray-600">
+                        <div className="font-semibold text-gray-800">{firstDt.date}</div>
+                        <div className="text-[10px] text-gray-500">{firstDt.time}</div>
+                      </td>
+
+                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                        <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-gray-800 font-mono font-extrabold text-[11px] border border-gray-200">
+                          {d.count}x
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Full Chronological Login Log (Every Individual Login Event) */}
+      {filteredLogins.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <h4 className="text-xs font-extrabold uppercase tracking-wider text-gray-500">
+              Individual Login Timeline ({filteredLogins.length} event{filteredLogins.length === 1 ? '' : 's'})
+            </h4>
+            <span className="text-[10px] font-bold text-gray-400">Newest → Oldest</span>
+          </div>
+
+          {filteredLogins.map((rec, idx) => {
             const dt = formatExactDateTime(rec.loggedInAt);
             const hrsLabel = formatHoursAgoLabel(rec.loggedInAt, nowMs);
             const exactHours = getHoursAgo(rec.loggedInAt, nowMs);
@@ -629,9 +781,9 @@ export const CustomerDeviceHistoryPanel: React.FC<CustomerDeviceHistoryPanelProp
                 </div>
               </div>
             );
-          })
-        )}
-      </div>
+          })}
+        </div>
+      )}
     </div>
   );
 };
