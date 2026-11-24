@@ -16,13 +16,18 @@ import {
   EyeOff,
   Info,
   X,
-  Mic,
   Lock,
   Users,
   CheckCircle2,
-  ArrowLeft
+  ArrowLeft,
+  Download
 } from 'lucide-react';
 import { ChatMessage, Conversation, UserRole, UserProfile } from '../types';
+import {
+  prepareChatAttachment,
+  isImageAttachment,
+  downloadAttachmentFile
+} from '../utils/mediaCompression';
 import {
   subscribeToMessages,
   sendMessage,
@@ -60,17 +65,21 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
     url: string;
     type: 'image' | 'video' | 'document';
     name: string;
+    sizeKB?: number;
   } | null>(null);
+  const [processingAttachment, setProcessingAttachment] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
 
   // Editing state for Super Admin
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [editText, setEditText] = useState('');
 
   // Lightbox for media viewing
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxMedia, setLightboxMedia] = useState<{ url: string; name: string } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const docInputRef = useRef<HTMLInputElement>(null);
   const customerMessagesAutoOnRef = useRef<boolean>(true);
 
   useEffect(() => {
@@ -151,31 +160,36 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, forcedType?: 'image' | 'video') => {
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    forcedType?: 'image' | 'video' | 'document'
+  ) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
-    let type: 'image' | 'video' | 'document' = 'document';
-    if (file.type.startsWith('image/')) type = 'image';
-    else if (file.type.startsWith('video/')) type = 'video';
-    else if (forcedType) type = forcedType;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setAttachmentPreview({
-        url: reader.result as string,
-        type,
-        name: file.name
-      });
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+    setChatError(null);
+    setProcessingAttachment(true);
+    try {
+      const prepared = await prepareChatAttachment(file, forcedType);
+      setAttachmentPreview(prepared);
+    } catch (err: any) {
+      console.error('Attachment preparation failed:', err);
+      setChatError(
+        err?.message ||
+          'Could not attach this file. Please try taking a screenshot/photo of the receipt.'
+      );
+    } finally {
+      setProcessingAttachment(false);
+    }
   };
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (sending || processingAttachment) return;
     if (!inputText.trim() && !attachmentPreview) return;
 
+    setChatError(null);
     setSending(true);
 
     const isCustomer = currentUserProfile.role === 'customer';
@@ -238,10 +252,16 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
       setInputText('');
       setAttachmentPreview(null);
+      setChatError(null);
       scrollToBottom();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to send message:', err);
-      alert('Message could not be sent. Please check network connection.');
+      const errMsg = typeof err?.message === 'string' ? err.message : '';
+      if (errMsg.includes('1048487') || errMsg.toLowerCase().includes('too large')) {
+        setChatError('Attachment is too large to deliver. Please send a smaller photo or screenshot.');
+      } else {
+        setChatError('Message or attachment could not be sent. Please check your internet connection and tap Send again.');
+      }
     } finally {
       setSending(false);
     }
@@ -293,7 +313,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
       );
     } catch (err) {
       console.error(err);
-      alert('Failed to update message visibility.');
+      setChatError('Failed to update message visibility.');
     }
   };
 
@@ -315,7 +335,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
       );
     } catch (err) {
       console.error(err);
-      alert('Failed to delete message.');
+      setChatError('Failed to delete message.');
     }
   };
 
@@ -677,40 +697,76 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                   )}
 
 
-                  {/* Attachment Previews */}
-                  {msg.attachmentUrl && (
-                    <div className="mb-2.5 rounded-xl overflow-hidden border border-black/10">
-                      {msg.attachmentType === 'image' && (
-                        <img
-                          src={msg.attachmentUrl}
-                          alt={msg.attachmentName || 'Attached freight photo'}
-                          className="max-h-60 rounded-xl object-cover cursor-pointer hover:opacity-95 transition-opacity"
-                          onClick={() => setLightboxUrl(msg.attachmentUrl!)}
-                        />
-                      )}
-
-                      {msg.attachmentType === 'video' && (
-                        <video
-                          src={msg.attachmentUrl}
-                          controls
-                          className="max-h-60 rounded-xl w-full bg-black"
-                        />
-                      )}
-
-                      {msg.attachmentType === 'document' && (
-                        <a
-                          href={msg.attachmentUrl}
-                          download={msg.attachmentName || 'waybill_doc.pdf'}
-                          className={`flex items-center space-x-2 p-2.5 rounded-xl text-xs font-semibold ${
-                            isMe ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-800'
-                          }`}
-                        >
-                          <FileText className="w-4 h-4 shrink-0" />
-                          <span className="truncate">{msg.attachmentName || 'Consignment Waybill Document'}</span>
-                        </a>
-                      )}
-                    </div>
-                  )}
+                  {/* Attachment Previews (Images, Receipts, Videos, Documents) */}
+                  {msg.attachmentUrl && (() => {
+                    const renderAsImage = isImageAttachment(
+                      msg.attachmentUrl,
+                      msg.attachmentType,
+                      msg.attachmentName
+                    );
+                    const fileName = msg.attachmentName || (renderAsImage ? 'receipt_photo.jpg' : 'receipt_document.pdf');
+                    return (
+                      <div className="mb-2.5 rounded-xl overflow-hidden border border-black/10 space-y-1.5">
+                        {renderAsImage ? (
+                          <div className="relative">
+                            <img
+                              src={msg.attachmentUrl}
+                              alt={fileName}
+                              loading="lazy"
+                              className="max-h-72 w-full rounded-xl object-contain bg-black/5 cursor-pointer hover:opacity-95 transition-opacity"
+                              onClick={() => setLightboxMedia({ url: msg.attachmentUrl!, name: fileName })}
+                            />
+                            <div className={`flex items-center justify-between gap-2 px-2 py-1 text-[10px] font-bold ${
+                              isMe ? 'bg-blue-700/80 text-blue-50' : 'bg-slate-100 text-slate-700'
+                            }`}>
+                              <span className="truncate">{fileName}</span>
+                              <div className="flex items-center space-x-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setLightboxMedia({ url: msg.attachmentUrl!, name: fileName })}
+                                  className="underline hover:opacity-80 cursor-pointer"
+                                >
+                                  View
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => downloadAttachmentFile(msg.attachmentUrl!, fileName)}
+                                  className="inline-flex items-center space-x-0.5 underline hover:opacity-80 cursor-pointer"
+                                  title="Download image / receipt"
+                                >
+                                  <Download className="w-3 h-3" />
+                                  <span>Save</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : msg.attachmentType === 'video' ? (
+                          <video
+                            src={msg.attachmentUrl}
+                            controls
+                            className="max-h-60 rounded-xl w-full bg-black"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => downloadAttachmentFile(msg.attachmentUrl!, fileName)}
+                            className={`w-full flex items-center justify-between space-x-2 p-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-opacity hover:opacity-90 ${
+                              isMe ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-800'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-2 min-w-0">
+                              <FileText className="w-4 h-4 shrink-0" />
+                              <span className="truncate">{fileName}</span>
+                            </div>
+                            <span className="inline-flex items-center space-x-1 text-[10px] font-extrabold uppercase shrink-0">
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Save</span>
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Message Text */}
                   <div className={`text-sm leading-relaxed whitespace-pre-wrap ${msg.isDeleted ? 'italic opacity-70' : ''}`}>
@@ -880,40 +936,68 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Inline Attachment / Send Error Banner (works cleanly inside iframes & mobile webviews) */}
+      {chatError && (
+        <div className="px-3 py-2 bg-red-50 border-t border-red-200 flex items-center justify-between gap-2 text-xs text-red-700 font-semibold shrink-0">
+          <div className="flex items-center space-x-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+            <span className="break-words">{chatError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setChatError(null)}
+            className="p-1 rounded-lg hover:bg-red-100 text-red-600 cursor-pointer shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Optimizing Attachment Notice */}
+      {processingAttachment && (
+        <div className="px-3 py-2 bg-blue-50 border-t border-blue-200 flex items-center space-x-2 text-xs font-bold text-blue-800 shrink-0">
+          <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin shrink-0" />
+          <span>Optimizing photo / receipt for instant delivery...</span>
+        </div>
+      )}
+
       {/* Attachment Preview Box */}
-      {attachmentPreview && (
-        <div className="p-3 bg-white border-t border-gray-200 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
+      {attachmentPreview && !processingAttachment && (
+        <div className="p-2.5 sm:p-3 bg-white border-t border-gray-200 flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center space-x-3 min-w-0">
             {attachmentPreview.type === 'image' && (
               <img
                 src={attachmentPreview.url}
                 alt="Preview"
-                className="w-12 h-12 rounded-xl object-cover border border-gray-200"
+                className="w-12 h-12 rounded-xl object-cover border border-gray-200 shrink-0"
               />
             )}
             {attachmentPreview.type === 'video' && (
-              <div className="w-12 h-12 rounded-xl bg-black flex items-center justify-center text-white">
+              <div className="w-12 h-12 rounded-xl bg-black flex items-center justify-center text-white shrink-0">
                 <VideoIcon className="w-6 h-6" />
               </div>
             )}
             {attachmentPreview.type === 'document' && (
-              <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                 <FileText className="w-6 h-6" />
               </div>
             )}
-            <div>
-              <p className="text-xs font-bold text-gray-800 truncate max-w-[200px]">
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-gray-800 truncate max-w-[200px] sm:max-w-[280px]">
                 {attachmentPreview.name}
               </p>
-              <span className="text-[10px] uppercase font-bold text-blue-600">
+              <span className="text-[10px] uppercase font-bold text-emerald-600">
                 Ready to send {attachmentPreview.type}
+                {attachmentPreview.sizeKB ? ` (${attachmentPreview.sizeKB} KB)` : ''}
               </span>
             </div>
           </div>
 
           <button
+            type="button"
             onClick={() => setAttachmentPreview(null)}
-            className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-700 cursor-pointer"
+            className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-700 cursor-pointer shrink-0"
+            title="Remove attachment"
           >
             <X className="w-4 h-4" />
           </button>
@@ -922,13 +1006,20 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
       {/* Input Area */}
       <div className="p-2.5 sm:p-3 bg-white border-t border-gray-200 space-y-1.5 shrink-0">
-        {/* Hidden File Input */}
+        {/* Two Dedicated Hidden File Inputs (reliable across iOS Safari, Android, Tablet & PC) */}
         <input
           type="file"
-          ref={fileInputRef}
-          onChange={handleFileUpload}
+          ref={imageInputRef}
+          onChange={(e) => handleFileUpload(e, 'image')}
           className="hidden"
-          accept="image/*,video/*,application/pdf"
+          accept="image/*"
+        />
+        <input
+          type="file"
+          ref={docInputRef}
+          onChange={(e) => handleFileUpload(e)}
+          className="hidden"
+          accept="image/*,application/pdf,.pdf,.doc,.docx,.txt"
         />
 
         {/* Textarea Input */}
@@ -944,53 +1035,37 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
           }}
           placeholder={
             isCustomer
-              ? "Type message to Company Support..."
-              : "Type reply to customer (Shift+Enter for newline, Enter to send)..."
+              ? "Type message or attach photo / payment receipt..."
+              : "Type reply or attach photo / receipt (Enter to send)..."
           }
           className="w-full bg-slate-50 border border-gray-200 focus:border-blue-500 focus:bg-white rounded-xl p-2.5 text-xs text-gray-800 placeholder-gray-400 outline-none resize-none transition-all"
         />
 
         {/* Toolbar below textarea */}
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center space-x-1">
-            {/* Mic button */}
+          <div className="flex items-center space-x-1.5">
+            {/* Photo / Receipt Image Button */}
             <button
               type="button"
-              onClick={() => alert('Voice note recording ready: speak into your microphone.')}
-              className="p-1.5 sm:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
-              title="Record Voice Dispatch Note"
+              disabled={processingAttachment}
+              onClick={() => imageInputRef.current?.click()}
+              className="px-2.5 py-1.5 text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-colors cursor-pointer inline-flex items-center space-x-1 text-[11px] font-bold disabled:opacity-50"
+              title="Attach Photo or Payment Receipt Image"
             >
-              <Mic className="w-4 h-4" />
+              <ImageIcon className="w-3.5 h-3.5 shrink-0" />
+              <span>Photo / Receipt</span>
             </button>
 
-            {/* Document / Paperclip */}
+            {/* Document / PDF / File Button */}
             <button
               type="button"
-              onClick={() => {
-                if (fileInputRef.current) {
-                  fileInputRef.current.accept = 'application/pdf,.doc,.docx,.txt';
-                  fileInputRef.current.click();
-                }
-              }}
-              className="p-1.5 sm:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
-              title="Attach Document / Waybill"
+              disabled={processingAttachment}
+              onClick={() => docInputRef.current?.click()}
+              className="px-2 py-1.5 text-gray-600 hover:text-blue-700 bg-slate-100 hover:bg-blue-50 border border-gray-200 rounded-xl transition-colors cursor-pointer inline-flex items-center space-x-1 text-[11px] font-bold disabled:opacity-50"
+              title="Attach PDF Receipt or Document"
             >
-              <Paperclip className="w-4 h-4" />
-            </button>
-
-            {/* Gallery / Image button */}
-            <button
-              type="button"
-              onClick={() => {
-                if (fileInputRef.current) {
-                  fileInputRef.current.accept = 'image/*';
-                  fileInputRef.current.click();
-                }
-              }}
-              className="p-1.5 sm:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
-              title="Attach Freight Photo"
-            >
-              <ImageIcon className="w-4 h-4" />
+              <Paperclip className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">File / PDF</span>
             </button>
           </div>
 
@@ -1018,11 +1093,12 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
             {/* Send Button */}
             <button
+              type="button"
               onClick={() => handleSendMessage()}
-              disabled={sending || (!inputText.trim() && !attachmentPreview)}
+              disabled={sending || processingAttachment || (!inputText.trim() && !attachmentPreview)}
               className="flex items-center space-x-1.5 px-4 py-1.5 sm:py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer"
             >
-              <span>Send</span>
+              <span>{sending ? 'Sending...' : 'Send'}</span>
               <Send className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -1085,16 +1161,41 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
         </div>
       )}
 
-      {/* Lightbox for full size photo */}
-      {lightboxUrl && (
+      {/* Lightbox for full size photo / receipt */}
+      {lightboxMedia && (
         <div
-          onClick={() => setLightboxUrl(null)}
-          className="fixed inset-0 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 z-50 cursor-zoom-out"
+          onClick={() => setLightboxMedia(null)}
+          className="fixed inset-0 bg-black/90 backdrop-blur-xs flex flex-col items-center justify-center p-3 sm:p-6 z-50"
         >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-4xl flex items-center justify-between text-white mb-3 px-2"
+          >
+            <span className="text-xs sm:text-sm font-bold truncate">{lightboxMedia.name}</span>
+            <div className="flex items-center space-x-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => downloadAttachmentFile(lightboxMedia.url, lightboxMedia.name)}
+                className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold inline-flex items-center space-x-1.5 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLightboxMedia(null)}
+                className="p-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white cursor-pointer"
+                title="Close Preview"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
           <img
-            src={lightboxUrl}
-            alt="Expanded Attachment"
-            className="max-h-[90vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl"
+            src={lightboxMedia.url}
+            alt={lightboxMedia.name}
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[82vh] max-w-[94vw] rounded-2xl object-contain shadow-2xl bg-white/5"
           />
         </div>
       )}

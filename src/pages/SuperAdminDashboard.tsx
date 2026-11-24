@@ -44,8 +44,10 @@ import {
   Maximize2,
   Minimize2,
   Smartphone,
-  Monitor
+  Monitor,
+  Download
 } from 'lucide-react';
+import { isImageAttachment, downloadAttachmentFile } from '../utils/mediaCompression';
 import { useAuth } from '../context/AuthContext';
 import {
   UserProfile,
@@ -1845,37 +1847,57 @@ export const SuperAdminDashboard: React.FC = () => {
                             </p>
                           )}
 
-                          {msg.attachmentUrl && (
-                            <div className="bg-white p-2.5 rounded-xl border border-gray-200 space-y-2">
-                              {msg.attachmentType === 'image' && (
-                                <img
-                                  src={msg.attachmentUrl}
-                                  alt={msg.attachmentName || 'Customer uploaded photo or receipt'}
-                                  className="max-h-56 rounded-lg object-contain border border-gray-100"
-                                />
-                              )}
-                              {msg.attachmentType === 'video' && (
-                                <video
-                                  src={msg.attachmentUrl}
-                                  controls
-                                  className="max-h-56 rounded-lg bg-black"
-                                />
-                              )}
-                              {msg.attachmentType === 'document' && (
-                                <a
-                                  href={msg.attachmentUrl}
-                                  download={msg.attachmentName || 'customer_receipt.pdf'}
-                                  className="inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold hover:bg-blue-100"
-                                >
-                                  <FileText className="w-4 h-4 shrink-0" />
-                                  <span className="truncate">{msg.attachmentName || 'View / Download Receipt Document'}</span>
-                                </a>
-                              )}
-                              <div className="text-[11px] text-gray-500 font-medium truncate">
-                                File: {msg.attachmentName || 'Uploaded Media'}
+                          {msg.attachmentUrl && (() => {
+                            const renderAsImg = isImageAttachment(
+                              msg.attachmentUrl,
+                              msg.attachmentType,
+                              msg.attachmentName
+                            );
+                            const downloadName =
+                              msg.attachmentName ||
+                              (renderAsImg ? 'customer_receipt.jpg' : 'customer_receipt.pdf');
+
+                            return (
+                              <div className="bg-white p-2.5 rounded-xl border border-gray-200 space-y-2">
+                                {renderAsImg ? (
+                                  <div className="space-y-2">
+                                    <img
+                                      src={msg.attachmentUrl}
+                                      alt={msg.attachmentName || 'Customer uploaded photo or receipt'}
+                                      className="max-h-60 rounded-lg object-contain border border-gray-100 bg-slate-50"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => downloadAttachmentFile(msg.attachmentUrl!, downloadName)}
+                                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
+                                    >
+                                      <Download className="w-3.5 h-3.5 shrink-0" />
+                                      <span>Download Photo / Receipt</span>
+                                    </button>
+                                  </div>
+                                ) : msg.attachmentType === 'video' ? (
+                                  <video
+                                    src={msg.attachmentUrl}
+                                    controls
+                                    className="max-h-56 rounded-lg bg-black"
+                                  />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadAttachmentFile(msg.attachmentUrl!, downloadName)}
+                                    className="inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold hover:bg-blue-100 cursor-pointer"
+                                  >
+                                    <FileText className="w-4 h-4 shrink-0" />
+                                    <span className="truncate">{msg.attachmentName || 'Download Receipt Document'}</span>
+                                    <Download className="w-3.5 h-3.5 shrink-0" />
+                                  </button>
+                                )}
+                                <div className="text-[11px] text-gray-500 font-medium truncate">
+                                  File: {msg.attachmentName || 'Uploaded Media'}
+                                </div>
                               </div>
-                            </div>
-                          )}
+                            );
+                          })()}
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2 self-stretch md:self-center shrink-0">

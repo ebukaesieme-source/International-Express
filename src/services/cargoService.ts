@@ -1342,6 +1342,10 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
       };
     }
 
+    if (normalizedMsg.attachmentUrl && normalizedMsg.attachmentUrl.length > 920_000) {
+      throw new Error('Attachment is too large (over Firestore 1MB limit). Please send a photo or screenshot.');
+    }
+
     const dataToSave = cleanFirestoreData({
       ...normalizedMsg,
       createdAt: now
@@ -1352,7 +1356,13 @@ export async function sendMessage(msg: Omit<ChatMessage, 'id' | 'createdAt'>): P
     if (normalizedMsg.moderationStatus !== 'rejected') {
       const msgSummary =
         normalizedMsg.text ||
-        (normalizedMsg.attachmentType ? `[${normalizedMsg.attachmentType.toUpperCase()}]` : 'Sent attachment');
+        (normalizedMsg.attachmentType === 'image'
+          ? 'Sent photo / receipt'
+          : normalizedMsg.attachmentType === 'document'
+          ? 'Sent receipt / document'
+          : normalizedMsg.attachmentType === 'video'
+          ? 'Sent video'
+          : 'Sent attachment');
       const visibleToSubAdmin = isMessageVisibleToSubAdmin(normalizedMsg);
 
       const convRef = doc(db, 'conversations', normalizedMsg.conversationId);

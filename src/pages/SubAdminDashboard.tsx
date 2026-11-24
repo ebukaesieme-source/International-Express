@@ -73,6 +73,7 @@ import {
 } from '../services/cargoService';
 import { ChatComponent } from '../components/ChatComponent';
 import { isUsaOnlyRestrictedAccount } from '../utils/geoAccess';
+import { compressImageToDataUrl } from '../utils/mediaCompression';
 
 type SubAdminTab =
   | 'overview'
@@ -492,19 +493,27 @@ export const SubAdminDashboard: React.FC = () => {
     }
   };
 
-  // Multiple Package Image Upload handler
-  const handleMultiplePackageImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Multiple Package Image Upload handler (auto-compressed so shipment docs never exceed Firestore 1MB limit)
+  const handleMultiplePackageImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    Array.from(files).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          setDeliveryPackageImages(prev => [...prev, reader.result as string]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+    const selectedFiles = Array.from(files);
+    e.target.value = '';
+
+    const compressedUrls: string[] = [];
+    for (const file of selectedFiles) {
+      try {
+        const compressed = await compressImageToDataUrl(file, 200_000);
+        compressedUrls.push(compressed);
+      } catch (err: any) {
+        console.error('Package image compression failed:', err);
+        showToast(err?.message || `Could not attach image "${file.name}".`, 'error');
+      }
+    }
+
+    if (compressedUrls.length > 0) {
+      setDeliveryPackageImages(prev => [...prev, ...compressedUrls]);
+    }
   };
 
   const handleAddPackagePhotoUrl = () => {
