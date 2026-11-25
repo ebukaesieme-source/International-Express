@@ -265,11 +265,11 @@ export const CustomerDashboard: React.FC = () => {
       )}
 
       {/* Unassigned Welcome Info Banner for New Customers */}
-      {(!userProfile?.assignedSubAdminId || userProfile.assignedSubAdminId === '') && (
+      {(!userProfile?.assignedSubAdminId || userProfile.assignedSubAdminId === '' || userProfile.assignedSubAdminId === 'unassigned') && (
         <div className="bg-amber-500/10 border-b border-amber-300 text-amber-900 px-6 py-3 text-xs text-center font-medium flex items-center justify-center space-x-2">
           <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
           <span>
-            <strong>Account Registered:</strong> Your consignee account is pending acceptance by a regional Sub Admin dispatcher. You will be connected automatically as soon as an operations manager accepts your consignment file.
+            <strong>Account Registered:</strong> Your account has been created and is awaiting Super Admin assignment to a Sub Admin account. You will be connected automatically as soon as your account is assigned.
           </span>
         </div>
       )}

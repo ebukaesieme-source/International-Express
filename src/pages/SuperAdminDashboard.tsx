@@ -65,6 +65,8 @@ import {
   getAllUsers,
   getSubAdmins,
   getCustomers,
+  subscribeToAllCustomers,
+  subscribeToAllSubAdmins,
   createOrUpdateUserProfile,
   updateUserPassword,
   updateUserSuspension,
@@ -195,6 +197,9 @@ export const SuperAdminDashboard: React.FC = () => {
 
   const [showTransferModal, setShowTransferModal] = useState<UserProfile | null>(null);
   const [transferTargetSubAdmin, setTransferTargetSubAdmin] = useState('');
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [quickAssignSelection, setQuickAssignSelection] = useState<Record<string, string>>({});
+  const [assigningCustomerId, setAssigningCustomerId] = useState<string | null>(null);
 
   // Delete User & Delete Shipment Confirmation Modal & Toast states
   const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
@@ -234,6 +239,22 @@ export const SuperAdminDashboard: React.FC = () => {
   const allCustomerDeviceLogins = useMemo(
     () => buildAllCustomerDeviceLogins(customers, auditLogs),
     [customers, auditLogs]
+  );
+
+  const isCustomerUnassigned = (c: UserProfile): boolean => {
+    if (!c.assignedSubAdminId || c.assignedSubAdminId === '' || c.assignedSubAdminId === 'unassigned') {
+      return true;
+    }
+    if (subAdmins.length > 0 && !subAdmins.some((s) => s.uid === c.assignedSubAdminId)) {
+      return true;
+    }
+    return false;
+  };
+
+  // Newly created customers awaiting Super Admin assignment to a Sub-Admin account
+  const unassignedCustomers = useMemo(
+    () => customers.filter((c) => isCustomerUnassigned(c)),
+    [customers, subAdmins]
   );
 
   // Real-time message subscription for the selected customer chat inside Sub-Admin Edit
@@ -433,10 +454,18 @@ export const SuperAdminDashboard: React.FC = () => {
     const unsubAudits = subscribeToAuditLogs((liveAudits) => {
       setAuditLogs(liveAudits);
     });
+    const unsubCustomers = subscribeToAllCustomers((liveCustomers) => {
+      setCustomers(liveCustomers);
+    });
+    const unsubSubAdmins = subscribeToAllSubAdmins((liveSubAdmins) => {
+      setSubAdmins(liveSubAdmins);
+    });
     return () => {
       unsubSettings();
       unsubPending();
       unsubAudits();
+      unsubCustomers();
+      unsubSubAdmins();
     };
   }, []);
 
@@ -822,11 +851,56 @@ export const SuperAdminDashboard: React.FC = () => {
     }
   };
 
-  // Transfer customer
+  // Quick one-click assignment of newly registered customer to a Sub-Admin account
+  const handleQuickAssignCustomer = async (cust: UserProfile, targetSubAdminId?: string) => {
+    const resolvedSubId = targetSubAdminId || quickAssignSelection[cust.uid] || subAdmins[0]?.uid || '';
+    const targetSub = subAdmins.find(s => s.uid === resolvedSubId);
+    if (!targetSub) {
+      showToast('Please select a Sub Admin account to assign this customer to.', 'error');
+      return;
+    }
+
+    setAssigningCustomerId(cust.uid);
+    try {
+      await transferCustomer(cust.uid, targetSub.uid, targetSub.fullName);
+
+      await addAuditLog(
+        'customer_assigned_by_super_admin',
+        userProfile?.fullName || 'Super Admin',
+        'super_admin',
+        `Super Admin assigned newly registered customer ${cust.fullName} (${cust.email}) to Sub Admin ${targetSub.fullName}`
+      );
+
+      setCustomers(prev => prev.map(c => c.uid === cust.uid ? {
+        ...c,
+        assignedSubAdminId: targetSub.uid,
+        assignedSubAdminName: targetSub.fullName
+      } : c));
+
+      setQuickAssignSelection(prev => {
+        const next = { ...prev };
+        delete next[cust.uid];
+        return next;
+      });
+      loadAllData();
+      showToast(`${cust.fullName} is now assigned to Sub Admin ${targetSub.fullName}.`);
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to assign customer to Sub Admin.', 'error');
+    } finally {
+      setAssigningCustomerId(null);
+    }
+  };
+
+  // Assign or Transfer customer via modal
   const handleTransferCustomer = async () => {
-    if (!showTransferModal || !transferTargetSubAdmin) return;
-    const targetSub = subAdmins.find(s => s.uid === transferTargetSubAdmin);
+    if (!showTransferModal) return;
+    const effectiveTargetId = transferTargetSubAdmin || subAdmins[0]?.uid || '';
+    if (!effectiveTargetId) return;
+    const targetSub = subAdmins.find(s => s.uid === effectiveTargetId);
     if (!targetSub) return;
+
+    const wasUnassigned = isCustomerUnassigned(showTransferModal);
 
     try {
       await transferCustomer(
@@ -836,10 +910,12 @@ export const SuperAdminDashboard: React.FC = () => {
       );
 
       await addAuditLog(
-        'customer_transferred',
+        wasUnassigned ? 'customer_assigned_by_super_admin' : 'customer_transferred',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
-        `Transferred customer ${showTransferModal.fullName} from previous assignment to Sub Admin ${targetSub.fullName}`
+        wasUnassigned
+          ? `Super Admin assigned customer ${showTransferModal.fullName} (${showTransferModal.email}) to Sub Admin ${targetSub.fullName}`
+          : `Transferred customer ${showTransferModal.fullName} from previous assignment to Sub Admin ${targetSub.fullName}`
       );
 
       setCustomers(prev => prev.map(c => c.uid === showTransferModal.uid ? {
@@ -851,10 +927,14 @@ export const SuperAdminDashboard: React.FC = () => {
       setShowTransferModal(null);
       setTransferTargetSubAdmin('');
       loadAllData();
-      showToast(`Customer ${showTransferModal.fullName} reassigned to ${targetSub.fullName}.`);
+      showToast(
+        wasUnassigned
+          ? `Customer ${showTransferModal.fullName} assigned to ${targetSub.fullName}.`
+          : `Customer ${showTransferModal.fullName} reassigned to ${targetSub.fullName}.`
+      );
     } catch (err) {
       console.error(err);
-      showToast('Failed to transfer customer.', 'error');
+      showToast(wasUnassigned ? 'Failed to assign customer.' : 'Failed to transfer customer.', 'error');
     }
   };
 
@@ -1284,9 +1364,19 @@ export const SuperAdminDashboard: React.FC = () => {
                   <Users className="w-4 h-4 shrink-0" />
                   <span className="truncate">Customers</span>
                 </div>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 shrink-0">
-                  {customers.length}
-                </span>
+                <div className="flex items-center space-x-1 shrink-0">
+                  {unassignedCustomers.length > 0 && (
+                    <span
+                      className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-500 text-white animate-pulse"
+                      title={`${unassignedCustomers.length} new customer(s) awaiting Super Admin assignment`}
+                    >
+                      {unassignedCustomers.length} New
+                    </span>
+                  )}
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                    {customers.length}
+                  </span>
+                </div>
               </button>
 
               <button
@@ -1569,6 +1659,99 @@ export const SuperAdminDashboard: React.FC = () => {
                   )}
                 </div>
               </div>
+
+              {/* Newly Registered Customers Awaiting Super Admin Assignment */}
+              {unassignedCustomers.length > 0 && (
+                <div className="bg-amber-50 border border-amber-300 rounded-2xl p-5 shadow-xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-amber-200">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="p-2 rounded-xl bg-amber-500 text-white shrink-0">
+                        <UserPlus className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-amber-950">
+                          New Customer Accounts Awaiting Assignment ({unassignedCustomers.length})
+                        </h3>
+                        <p className="text-[11px] text-amber-800">
+                          Assign each newly created customer account to the Sub Admin account it will belong to.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedSubAdminFilter('unassigned');
+                        setActiveSection('customers');
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold cursor-pointer transition-colors self-start sm:self-auto"
+                    >
+                      View in Customers
+                    </button>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {unassignedCustomers.map((cust) => {
+                      const selectedSubId = quickAssignSelection[cust.uid] || subAdmins[0]?.uid || '';
+                      const isAssigning = assigningCustomerId === cust.uid;
+                      return (
+                        <div
+                          key={cust.uid}
+                          className="bg-white rounded-xl border border-amber-200 p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center flex-wrap gap-2">
+                              <span className="font-black text-xs text-gray-900">{cust.fullName}</span>
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase bg-amber-100 text-amber-800 border border-amber-200">
+                                Awaiting Assignment
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-gray-500 truncate">
+                              {cust.email} • {cust.country || 'International'}
+                              {cust.createdAt && ` • Joined ${new Date(cust.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+                            {subAdmins.length > 0 ? (
+                              <>
+                                <select
+                                  value={selectedSubId}
+                                  onChange={(e) =>
+                                    setQuickAssignSelection((prev) => ({
+                                      ...prev,
+                                      [cust.uid]: e.target.value
+                                    }))
+                                  }
+                                  className="px-3 py-2 bg-slate-50 border border-gray-300 rounded-xl text-xs font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                >
+                                  {subAdmins.map((s) => (
+                                    <option key={s.uid} value={s.uid}>
+                                      {s.fullName} ({s.email})
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  disabled={isAssigning || !selectedSubId}
+                                  onClick={() => handleQuickAssignCustomer(cust, selectedSubId)}
+                                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-extrabold cursor-pointer transition-colors shadow-xs inline-flex items-center justify-center space-x-1.5"
+                                >
+                                  <UserPlus className="w-3.5 h-3.5" />
+                                  <span>{isAssigning ? 'Assigning...' : 'Assign to Sub Admin'}</span>
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-[11px] font-bold text-red-600">
+                                Create a Sub Admin account first to assign
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Quick Actions & Recent Activities */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -2392,23 +2575,45 @@ export const SuperAdminDashboard: React.FC = () => {
 
           {/* SECTION 3: CUSTOMERS & TRANSFERS */}
           {activeSection === 'customers' && (
-            <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-6 animate-fadeIn">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
+            <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-5 animate-fadeIn">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-gray-100">
                 <div>
-                  <h2 className="text-lg font-black text-gray-900">Customer Roster & Dispatch Assignment</h2>
-                  <p className="text-xs text-gray-500">
-                    View customer profiles, assign or transfer customers between Sub Admins.
+                  <div className="flex items-center flex-wrap gap-2">
+                    <h2 className="text-lg font-black text-gray-900">Customer Roster & Dispatch Assignment</h2>
+                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-slate-100 text-slate-700 border border-slate-200">
+                      {customers.length} Total Created
+                    </span>
+                    {unassignedCustomers.length > 0 && (
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-amber-100 text-amber-800 border border-amber-300">
+                        {unassignedCustomers.length} Awaiting Assignment
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Every created customer account appears here in real time. Click Assign to place each customer under a Sub Admin account.
                   </p>
                 </div>
 
-                <div className="flex items-center space-x-3">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={customerSearchQuery}
+                      onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                      placeholder="Search customer name or email..."
+                      className="pl-8 pr-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-56"
+                    />
+                  </div>
                   <select
                     value={selectedSubAdminFilter}
                     onChange={(e) => setSelectedSubAdminFilter(e.target.value)}
                     className="px-3 py-2 bg-slate-50 border border-gray-200 rounded-xl text-xs font-semibold focus:outline-none"
                   >
-                    <option value="all">All Dispatch Allocations</option>
-                    <option value="unassigned">⚡ Unassigned (Awaiting Acceptance)</option>
+                    <option value="all">All Created Customers ({customers.length})</option>
+                    <option value="unassigned">
+                      Unassigned — Awaiting Assignment ({unassignedCustomers.length})
+                    </option>
                     {subAdmins.map((s) => (
                       <option key={s.uid} value={s.uid}>
                         Belongs to: {s.fullName}
@@ -2418,7 +2623,7 @@ export const SuperAdminDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Customer Table */}
+              {/* Customer Table — ALL Created Customer Accounts Listed Here (Unassigned & Newest First) */}
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-gray-500 uppercase tracking-wider text-[10px] border-y border-gray-100">
@@ -2431,20 +2636,53 @@ export const SuperAdminDashboard: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {customers
-                      .filter((c) => {
-                        if (selectedSubAdminFilter === 'all') return true;
-                        if (selectedSubAdminFilter === 'unassigned') return !c.assignedSubAdminId || c.assignedSubAdminId === 'unassigned';
-                        return c.assignedSubAdminId === selectedSubAdminFilter;
-                      })
-                      .map((cust) => {
+                    {(() => {
+                      const q = customerSearchQuery.trim().toLowerCase();
+                      const filteredCustomers = customers
+                        .filter((c) => {
+                          if (selectedSubAdminFilter === 'unassigned') {
+                            if (!isCustomerUnassigned(c)) return false;
+                          } else if (selectedSubAdminFilter !== 'all') {
+                            if (c.assignedSubAdminId !== selectedSubAdminFilter) return false;
+                          }
+                          if (q) {
+                            const hay = `${c.fullName || ''} ${c.email || ''} ${c.phoneNumber || c.phone || ''} ${c.country || ''} ${c.address || ''}`.toLowerCase();
+                            if (!hay.includes(q)) return false;
+                          }
+                          return true;
+                        })
+                        .sort((a, b) => {
+                          const aUn = isCustomerUnassigned(a);
+                          const bUn = isCustomerUnassigned(b);
+                          if (aUn !== bUn) return aUn ? -1 : 1;
+                          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                          return tB - tA;
+                        });
+
+                      if (filteredCustomers.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={5} className="py-10 px-4 text-center text-gray-500 font-medium">
+                              No customer accounts match the current filter.
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return filteredCustomers.map((cust) => {
                         const custShipments = shipments.filter(s => s.customerId === cust.uid);
                         const custDevices = allCustomerDeviceLogins.filter(d => d.customerId === cust.uid);
                         const latestDevice = custDevices[0];
-                        const isUnassigned = !cust.assignedSubAdminId || cust.assignedSubAdminId === 'unassigned';
+                        const isUnassigned = isCustomerUnassigned(cust);
 
                         return (
-                          <tr key={cust.uid} className="hover:bg-slate-50/80 transition-colors">
+                          <tr
+                            key={cust.uid}
+                            className={`transition-colors ${
+                              isUnassigned ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-slate-50/80'
+                            }`}
+                          >
                             <td className="py-3.5 px-4">
                               <div className="flex items-center flex-wrap gap-1.5">
                                 <span className="font-bold text-gray-900">{cust.fullName}</span>
@@ -2455,7 +2693,14 @@ export const SuperAdminDashboard: React.FC = () => {
                                 )}
                               </div>
                               <div className="text-gray-500 text-[11px]">{cust.email}</div>
-                              <div className="text-gray-400 text-[10px]">{cust.phoneNumber || cust.phone || 'No phone'}</div>
+                              <div className="text-gray-400 text-[10px]">
+                                {cust.phoneNumber || cust.phone || 'No phone'}
+                                {cust.createdAt && (
+                                  <span>
+                                    {' '}• Created {new Date(cust.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                                  </span>
+                                )}
+                              </div>
                               {latestDevice && (
                                 <button
                                   type="button"
@@ -2470,14 +2715,14 @@ export const SuperAdminDashboard: React.FC = () => {
                               )}
                             </td>
                             <td className="py-3.5 px-4">
-                              <div className="font-bold text-gray-800">{cust.country}</div>
-                              <div className="text-gray-500 text-[11px] truncate max-w-[180px]">{cust.address}</div>
+                              <div className="font-bold text-gray-800">{cust.country || 'Not specified'}</div>
+                              <div className="text-gray-500 text-[11px] truncate max-w-[180px]">{cust.address || '—'}</div>
                             </td>
                             <td className="py-3.5 px-4">
                               {isUnassigned ? (
                                 <span className="font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2.5 py-1 rounded-lg text-[11px] inline-flex items-center space-x-1.5 shadow-xs">
                                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                                  <span>Unassigned (Awaiting Sub Admin)</span>
+                                  <span>Awaiting Super Admin Assignment</span>
                                 </span>
                               ) : (
                                 <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg text-xs">
@@ -2494,6 +2739,7 @@ export const SuperAdminDashboard: React.FC = () => {
                               <div className="flex items-center justify-end flex-wrap gap-1.5">
                                 {/* 0. Device Login History (All devices + hours-ago search) */}
                                 <button
+                                  type="button"
                                   onClick={() => setDeviceHistoryCustomer(cust)}
                                   className="px-2 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200 cursor-pointer inline-flex items-center space-x-1 transition-colors"
                                   title="View all devices that have logged into this customer account, date/time, and search by hours ago"
@@ -2504,6 +2750,7 @@ export const SuperAdminDashboard: React.FC = () => {
 
                                 {/* 1. Change Password (Quick Reset) */}
                                 <button
+                                  type="button"
                                   onClick={() => handleOpenCustomerPasswordModal(cust)}
                                   className="px-2 py-1 rounded-lg text-[11px] font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-300 cursor-pointer inline-flex items-center space-x-1 transition-colors"
                                   title="Change and update customer login password"
@@ -2514,6 +2761,7 @@ export const SuperAdminDashboard: React.FC = () => {
 
                                 {/* 2. Edit & Pass */}
                                 <button
+                                  type="button"
                                   onClick={() => handleOpenEditUser(cust)}
                                   className="px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 cursor-pointer inline-flex items-center space-x-1 transition-colors"
                                   title="Edit Customer profile and set password"
@@ -2522,21 +2770,23 @@ export const SuperAdminDashboard: React.FC = () => {
                                   <span>Edit</span>
                                 </button>
 
-                                {/* 2. Suspend / Reactivate */}
+                                {/* 3. Suspend / Reactivate */}
                                 <button
+                                  type="button"
                                   onClick={() => handleToggleSuspension(cust)}
                                   className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer border ${
                                     cust.isSuspended
                                       ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200'
                                       : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200'
                                   }`}
-                                  title={cust.isSuspended ? "Reactivate customer account" : "Suspend customer account"}
+                                  title={cust.isSuspended ? 'Reactivate customer account' : 'Suspend customer account'}
                                 >
                                   {cust.isSuspended ? 'Reactivate' : 'Suspend'}
                                 </button>
 
-                                {/* 3. Delete Customer Button */}
+                                {/* 4. Delete Customer Button */}
                                 <button
+                                  type="button"
                                   onClick={() => handleDeleteUser(cust)}
                                   className="px-2 py-1 rounded-lg text-[11px] font-bold bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 cursor-pointer inline-flex items-center space-x-1 transition-colors"
                                   title="Permanently Delete Customer Account"
@@ -2545,24 +2795,26 @@ export const SuperAdminDashboard: React.FC = () => {
                                   <span>Delete</span>
                                 </button>
 
-                                {/* 4. Assign / Transfer */}
+                                {/* 5. Assign / Transfer */}
                                 {isUnassigned ? (
                                   <button
+                                    type="button"
                                     onClick={() => {
                                       setShowTransferModal(cust);
                                       setTransferTargetSubAdmin(subAdmins[0]?.uid || '');
                                     }}
-                                    className="px-2 py-1 rounded-lg text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white cursor-pointer inline-flex items-center space-x-1 shadow-xs transition-colors"
-                                    title="Assign to a Sub Admin"
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-extrabold bg-amber-600 hover:bg-amber-700 text-white cursor-pointer inline-flex items-center space-x-1 shadow-xs transition-colors"
+                                    title="Assign this customer account to a Sub Admin"
                                   >
                                     <UserPlus className="w-3 h-3" />
                                     <span>Assign Sub Admin</span>
                                   </button>
                                 ) : (
                                   <button
+                                    type="button"
                                     onClick={() => {
                                       setShowTransferModal(cust);
-                                      setTransferTargetSubAdmin(subAdmins[0]?.uid || '');
+                                      setTransferTargetSubAdmin(cust.assignedSubAdminId || subAdmins[0]?.uid || '');
                                     }}
                                     className="px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 cursor-pointer inline-flex items-center space-x-1 transition-colors"
                                     title="Transfer to another Sub Admin"
@@ -2572,8 +2824,9 @@ export const SuperAdminDashboard: React.FC = () => {
                                   </button>
                                 )}
 
-                                {/* 5. Chat */}
+                                {/* 6. Chat */}
                                 <button
+                                  type="button"
                                   onClick={async () => {
                                     try {
                                       let conv = conversations.find(c => c.customerId === cust.uid);
@@ -2608,7 +2861,8 @@ export const SuperAdminDashboard: React.FC = () => {
                             </td>
                           </tr>
                         );
-                      })}
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -3750,47 +4004,75 @@ export const SuperAdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* TRANSFER CUSTOMER MODAL */}
-      {showTransferModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-md w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4">
-            <h3 className="font-black text-lg text-gray-900">Transfer Customer Assignment</h3>
-            <p className="text-xs text-gray-500">
-              Reassign customer <strong className="text-gray-900">{showTransferModal.fullName}</strong> to another Sub Admin dispatcher.
-            </p>
+      {/* ASSIGN / TRANSFER CUSTOMER MODAL */}
+      {showTransferModal && (() => {
+        const isModalCustomerUnassigned = isCustomerUnassigned(showTransferModal);
+        const effectiveTargetSubAdmin = transferTargetSubAdmin || subAdmins[0]?.uid || '';
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50">
+            <div className="bg-white rounded-3xl max-w-md w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4">
+              <h3 className="font-black text-lg text-gray-900">
+                {isModalCustomerUnassigned ? 'Assign Customer to Sub Admin' : 'Transfer Customer Assignment'}
+              </h3>
+              <p className="text-xs text-gray-500">
+                {isModalCustomerUnassigned ? (
+                  <>
+                    Select which Sub Admin account newly registered customer{' '}
+                    <strong className="text-gray-900">{showTransferModal.fullName}</strong> will belong to.
+                  </>
+                ) : (
+                  <>
+                    Reassign customer <strong className="text-gray-900">{showTransferModal.fullName}</strong> to another Sub Admin account.
+                  </>
+                )}
+              </p>
 
-            <div>
-              <label className="block text-xs font-bold text-gray-700 mb-1">Select Target Sub Admin</label>
-              <select
-                value={transferTargetSubAdmin}
-                onChange={(e) => setTransferTargetSubAdmin(e.target.value)}
-                className="w-full p-3 bg-slate-50 border border-gray-200 rounded-xl text-xs font-semibold"
-              >
-                {subAdmins.map((s) => (
-                  <option key={s.uid} value={s.uid}>
-                    {s.fullName} ({s.email})
-                  </option>
-                ))}
-              </select>
-            </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Select Target Sub Admin Account</label>
+                {subAdmins.length > 0 ? (
+                  <select
+                    value={effectiveTargetSubAdmin}
+                    onChange={(e) => setTransferTargetSubAdmin(e.target.value)}
+                    className="w-full p-3 bg-slate-50 border border-gray-200 rounded-xl text-xs font-semibold"
+                  >
+                    {subAdmins.map((s) => (
+                      <option key={s.uid} value={s.uid}>
+                        {s.fullName} ({s.email})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-xs text-red-600 font-semibold p-3 bg-red-50 rounded-xl border border-red-200">
+                    No Sub Admin accounts exist yet. Please create a Sub Admin account first.
+                  </p>
+                )}
+              </div>
 
-            <div className="flex justify-end space-x-3 pt-2">
-              <button
-                onClick={() => setShowTransferModal(null)}
-                className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleTransferCustomer}
-                className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-md"
-              >
-                Confirm Transfer
-              </button>
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTransferModal(null)}
+                  className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!effectiveTargetSubAdmin || subAdmins.length === 0}
+                  onClick={handleTransferCustomer}
+                  className={`px-5 py-2 text-xs font-bold text-white rounded-xl shadow-md cursor-pointer disabled:opacity-50 ${
+                    isModalCustomerUnassigned
+                      ? 'bg-amber-600 hover:bg-amber-700'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
+                >
+                  {isModalCustomerUnassigned ? 'Confirm Assignment' : 'Confirm Transfer'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* LIVE CUSTOMER TRACKING CARD PREVIEW MODAL (Super Admin view only) */}
       {trackingPreviewCode && (

@@ -325,19 +325,35 @@ export async function getCustomers(subAdminId?: string): Promise<UserProfile[]> 
 
     const all = snap.docs
       .map(d => {
-        const u = { ...(d.data() as UserProfile), uid: (d.data() as UserProfile).uid || d.id };
+        const raw = d.data() as UserProfile;
+        const u: UserProfile = {
+          ...raw,
+          uid: d.id,
+          role: raw.role || 'customer',
+          fullName: raw.fullName || raw.email || 'Customer'
+        };
         if (u.assignedSubAdminName && (u.assignedSubAdminName.includes('Regional Dispatch Lead') || u.assignedSubAdminName.includes('Marcus Vance'))) {
           u.assignedSubAdminName = 'Company Support';
         }
         return u;
       })
-      .filter(u => Boolean(u.role && (u.email || u.fullName)));
+      .filter(u => Boolean(u.email || u.fullName));
 
-    // Exclude any document with role !== 'customer' OR email in adminEmails
-    const customers = all.filter(u => 
-      u.role === 'customer' && 
+    // Include every non-admin user account created (explicitly 'customer' or missing role)
+    const customers = all.filter(u =>
+      u.role !== 'super_admin' &&
+      u.role !== 'sub_admin' &&
       !adminEmails.has((u.email || '').toLowerCase().trim())
     );
+
+    customers.sort((a, b) => {
+      const aUnassigned = !a.assignedSubAdminId || a.assignedSubAdminId === '' || a.assignedSubAdminId === 'unassigned';
+      const bUnassigned = !b.assignedSubAdminId || b.assignedSubAdminId === '' || b.assignedSubAdminId === 'unassigned';
+      if (aUnassigned !== bUnassigned) return aUnassigned ? -1 : 1;
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tB - tA;
+    });
 
     if (subAdminId) {
       return customers.filter(c => c.assignedSubAdminId === subAdminId);
@@ -371,21 +387,65 @@ export async function transferCustomer(
 ): Promise<void> {
   const path = `users/${customerId}`;
   try {
-    await updateDoc(doc(db, 'users', customerId), {
-      assignedSubAdminId: newSubAdminId,
-      assignedSubAdminName: newSubAdminName,
-      updatedAt: new Date().toISOString()
-    });
+    const now = new Date().toISOString();
+    await setDoc(
+      doc(db, 'users', customerId),
+      {
+        uid: customerId,
+        assignedSubAdminId: newSubAdminId,
+        assignedSubAdminName: newSubAdminName,
+        updatedAt: now
+      },
+      { merge: true }
+    );
 
-    // Also update any conversation for this customer
+    // Update existing conversations for this customer, or create one linked to the assigned Sub-Admin
     const convQuery = query(collection(db, 'conversations'), where('customerId', '==', customerId));
     const convSnap = await getDocs(convQuery);
-    for (const d of convSnap.docs) {
-      await updateDoc(doc(db, 'conversations', d.id), {
+    if (!convSnap.empty) {
+      for (const d of convSnap.docs) {
+        await updateDoc(doc(db, 'conversations', d.id), {
+          subAdminId: newSubAdminId,
+          subAdminName: newSubAdminName,
+          updatedAt: now
+        });
+      }
+    } else {
+      const custDoc = await getDoc(doc(db, 'users', customerId));
+      const custData = custDoc.data() as UserProfile | undefined;
+      const convId = `conv_${customerId}`;
+      await setDoc(doc(db, 'conversations', convId), cleanFirestoreData({
+        id: convId,
+        customerId,
+        customerName: custData?.fullName || 'Customer Consignee',
+        customerEmail: custData?.email || '',
         subAdminId: newSubAdminId,
         subAdminName: newSubAdminName,
-        updatedAt: new Date().toISOString()
-      });
+        lastMessage: '',
+        lastMessageTime: now,
+        unreadCustomerCount: 0,
+        unreadAdminCount: 0,
+        createdAt: now,
+        updatedAt: now
+      }));
+    }
+
+    // Assign any unassigned shipments of this customer to the assigned Sub-Admin
+    try {
+      const shipQuery = query(collection(db, 'shipments'), where('customerId', '==', customerId));
+      const shipSnap = await getDocs(shipQuery);
+      for (const s of shipSnap.docs) {
+        const sData = s.data();
+        if (!sData.subAdminId || sData.subAdminId === '' || sData.subAdminId === 'unassigned') {
+          await updateDoc(doc(db, 'shipments', s.id), {
+            subAdminId: newSubAdminId,
+            subAdminName: newSubAdminName,
+            updatedAt: now
+          });
+        }
+      }
+    } catch (shipErr) {
+      console.warn('Notice assigning customer shipments to sub admin:', shipErr);
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
@@ -2679,6 +2739,97 @@ export function subscribeToSubAdminCustomers(
     },
     (err) => {
       console.warn('Real-time sub admin customer listener error:', err);
+    }
+  );
+}
+
+export function subscribeToAllCustomers(
+  callback: (customers: UserProfile[]) => void
+) {
+  const q = query(collection(db, 'users'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const adminEmails = new Set<string>([
+        'admin@gmail.com',
+        'ebukaesieme@gmail.com',
+        'subadmin@expresscargo.com'
+      ]);
+
+      snapshot.docs.forEach(d => {
+        const u = d.data() as UserProfile;
+        if ((u.role === 'sub_admin' || u.role === 'super_admin') && u.email) {
+          adminEmails.add(u.email.toLowerCase().trim());
+        }
+      });
+
+      const all = snapshot.docs
+        .map(d => {
+          const data = d.data() as UserProfile;
+          const u: UserProfile = {
+            ...data,
+            uid: d.id,
+            role: data.role || 'customer',
+            fullName: data.fullName || data.email || 'Customer'
+          };
+          if (u.assignedSubAdminName && (u.assignedSubAdminName.includes('Regional Dispatch Lead') || u.assignedSubAdminName.includes('Marcus Vance'))) {
+            u.assignedSubAdminName = 'Company Support';
+          }
+          return u;
+        })
+        .filter(u => Boolean(u.email || u.fullName));
+
+      const customers = all.filter(
+        u =>
+          u.role !== 'super_admin' &&
+          u.role !== 'sub_admin' &&
+          !adminEmails.has((u.email || '').toLowerCase().trim())
+      );
+
+      customers.sort((a, b) => {
+        const aUnassigned = !a.assignedSubAdminId || a.assignedSubAdminId === '' || a.assignedSubAdminId === 'unassigned';
+        const bUnassigned = !b.assignedSubAdminId || b.assignedSubAdminId === '' || b.assignedSubAdminId === 'unassigned';
+        if (aUnassigned !== bUnassigned) return aUnassigned ? -1 : 1;
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tB - tA;
+      });
+
+      callback(customers);
+    },
+    (err) => {
+      console.warn('Real-time all customers listener error:', err);
+    }
+  );
+}
+
+export function subscribeToAllSubAdmins(
+  callback: (subAdmins: UserProfile[]) => void
+) {
+  const q = query(collection(db, 'users'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const seenEmails = new Set<string>();
+      const subAdmins: UserProfile[] = [];
+      for (const d of snapshot.docs) {
+        const raw = d.data() as UserProfile;
+        if (raw.role === 'sub_admin') {
+          const u: UserProfile = { ...raw, uid: d.id };
+          if (u.fullName && (u.fullName.includes('Marcus Vance') || u.fullName.includes('Regional Dispatch Lead'))) {
+            u.fullName = 'London Station Dispatch';
+          }
+          const dedupeKey = (u.email || u.uid).toLowerCase().trim();
+          if (!seenEmails.has(dedupeKey)) {
+            seenEmails.add(dedupeKey);
+            subAdmins.push(u);
+          }
+        }
+      }
+      callback(subAdmins);
+    },
+    (err) => {
+      console.warn('Real-time sub admins listener error:', err);
     }
   );
 }

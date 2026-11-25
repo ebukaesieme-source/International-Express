@@ -89,8 +89,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }
       }
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Invalid email or password. Please verify your credentials.');
+      if (err?.name !== 'GeoAccessError') {
+        console.warn('Sign-in rejected:', err?.message || err);
+      }
+      setError(err?.message || 'Invalid email or password. Please verify your credentials.');
     } finally {
       setLoading(false);
     }

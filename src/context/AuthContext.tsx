@@ -120,6 +120,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const isLoggingOutRef = useRef(false);
+  const isRegisteringRef = useRef(false);
   const lastActivityMemoryRef = useRef<number>(Date.now());
   const userProfileRef = useRef<UserProfile | null>(null);
   const currentUserRef = useRef<FirebaseUser | null>(null);
@@ -215,10 +216,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
-        setCurrentUser(user);
+        if (isRegisteringRef.current) {
+          return;
+        }
+
         if (user) {
           await syncUserProfile(user, false);
         } else {
+          setCurrentUser(null);
           // Check if there was a local session override for demo accounts
           const cachedRole = safeGetSession('iec_demo_role');
           const cachedUid = safeGetSession('iec_demo_uid');
@@ -251,6 +256,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUserProfile(null);
         }
       } catch (err) {
+        if (err instanceof GeoAccessError) {
+          return;
+        }
         console.error('Auth state initialization error:', err);
       } finally {
         setLoading(false);
@@ -284,9 +292,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (existingByEmail.uid !== user.uid) {
           await deleteUserDocOnly(existingByEmail.uid);
         }
+        if (!throwOnGeoBlock && auth.currentUser?.uid !== user.uid) {
+          return;
+        }
         markSessionActive();
         safeSetSession('iec_demo_uid', user.uid);
         safeSetSession('iec_demo_role', 'sub_admin');
+        setCurrentUser(user);
         setUserProfile(profile);
         return;
       }
@@ -325,7 +337,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             fullName: user.displayName || (isSuperAdminEmail ? 'Super Administrator' : isSubAdminEmail ? 'Sub Admin Station' : 'Valued Customer'),
             role: isSuperAdminEmail ? 'super_admin' : isSubAdminEmail ? 'sub_admin' : 'customer',
             assignedSubAdminId: '',
-            assignedSubAdminName: '',
+            assignedSubAdminName: isSuperAdminEmail || isSubAdminEmail ? '' : 'Unassigned (Awaiting Super Admin Assignment)',
             isSuspended: false,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
@@ -350,17 +362,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
+      if (!throwOnGeoBlock && auth.currentUser?.uid !== user.uid) {
+        return;
+      }
       markSessionActive();
       safeSetSession('iec_demo_uid', profile.uid);
       safeSetSession('iec_demo_role', profile.role);
+      setCurrentUser(user);
       setUserProfile(profile);
       if (profile.role === 'customer' && (throwOnGeoBlock || !safeGetSession(`iec_device_logged_${profile.uid}`))) {
         safeSetSession(`iec_device_logged_${profile.uid}`, '1');
         recordCustomerDeviceLogin(profile, throwOnGeoBlock ? 'Sign In' : 'Active Session').catch(() => {});
       }
     } catch (err) {
-      if (err instanceof GeoAccessError && throwOnGeoBlock) {
-        throw err;
+      if (err instanceof GeoAccessError) {
+        if (throwOnGeoBlock) {
+          throw err;
+        }
+        return;
       }
       console.error('Failed to sync user profile:', err);
     }
@@ -544,7 +563,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanEmail = data.email.trim().toLowerCase();
     const cleanPassword = data.password.trim();
 
-    let uid = '';
+    isRegisteringRef.current = true;
+    try {
+      // Check if an active account with this email already exists in Firestore
+      let existingFirestoreUser: UserProfile | undefined;
+      try {
+        const allExisting = await getAllUsers();
+        existingFirestoreUser = allExisting.find(
+          (u) => (u.email || '').toLowerCase().trim() === cleanEmail
+        );
+      } catch {
+        // Proceed with registration
+      }
+
+      if (existingFirestoreUser && existingFirestoreUser.role !== 'customer') {
+        throw new Error('This email address is reserved for an administrative account. Please use a different email.');
+      }
+
+      let uid = '';
 
       // 1. Register email and password directly on Firebase Authentication
       try {
@@ -560,12 +596,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (authErr: any) {
         console.warn('Firebase Auth registration:', authErr);
         if (authErr?.code === 'auth/email-already-in-use') {
-          // Email already exists in Firebase Auth - attempt verification via password
+          // Email already exists in Firebase Auth — verify password, or allow fresh Firestore profile if previously deleted by Super Admin
           try {
             const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
             uid = cred.user.uid;
-          } catch (signInErr) {
-            throw new Error('This email address is already registered on Firebase. Please sign in or use a different email.');
+          } catch {
+            if (!existingFirestoreUser) {
+              uid = 'cust_' + Date.now();
+            } else {
+              throw new Error('This email address is already registered. Please sign in or use a different email.');
+            }
           }
         } else if (authErr?.code === 'auth/weak-password') {
           throw new Error('Password must be at least 6 characters.');
@@ -577,9 +617,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // Newly registered customers are left unassigned so any Sub Admin can accept the account
+      // Newly registered customers remain unassigned until Super Admin assigns them to a Sub Admin account
       const assignedSubAdminId = '';
-      const assignedSubAdminName = 'Unassigned (Awaiting Sub Admin Acceptance)';
+      const assignedSubAdminName = 'Unassigned (Awaiting Super Admin Assignment)';
 
       const profile: UserProfile = {
         uid,
@@ -604,6 +644,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await unmarkAccountDeleted(uid, cleanEmail);
       await createOrUpdateUserProfile(profile);
       markSessionActive();
+      setCurrentUser(auth.currentUser);
       setUserProfile(profile);
       safeSetSession('iec_demo_uid', uid);
       safeSetSession('iec_demo_role', 'customer');
@@ -614,9 +655,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'customer_registered',
         profile.fullName,
         'customer',
-        `New customer account registered on Firebase: ${profile.fullName} (${profile.email}), Country: ${profile.country}. Awaiting dispatch station acceptance.`,
+        `New customer account registered on Firebase: ${profile.fullName} (${profile.email}), Country: ${profile.country}. Awaiting Super Admin assignment to a Sub Admin account.`,
         uid
       );
+    } finally {
+      isRegisteringRef.current = false;
+    }
   };
 
   const loginWithGoogle = async () => {
