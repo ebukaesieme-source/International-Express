@@ -27,6 +27,7 @@ import {
   Send,
   Sliders,
   ChevronRight,
+  ChevronDown,
   TrendingUp,
   Building,
   LogOut,
@@ -81,7 +82,11 @@ import {
   subscribeToPendingModerationMessages,
   moderateMessage,
   editMessage,
+  silentEditSubAdminMessage,
+  subscribeToMessages,
   deleteMessage,
+  updateSubAdminCanEditMessages,
+  updateAllSubAdminsCanEditMessages,
   getSystemSettings,
   subscribeToSystemSettings,
   updateSystemSettings,
@@ -107,6 +112,7 @@ export const SuperAdminDashboard: React.FC = () => {
   const [activeSection, setActiveSection] = useState<
     | 'overview'
     | 'subadmins'
+    | 'subadmin_edit'
     | 'customers'
     | 'devices'
     | 'shipments'
@@ -208,6 +214,16 @@ export const SuperAdminDashboard: React.FC = () => {
   // Active Chat Modal / Drawer
   const [activeChatConversation, setActiveChatConversation] = useState<Conversation | null>(null);
 
+  // Selected Sub-Admin & Customer Chat under Sub-Admin Edit and Channels
+  const [selectedEditSubAdminId, setSelectedEditSubAdminId] = useState<string | null>(null);
+  const [selectedSilentEditConv, setSelectedSilentEditConv] = useState<Conversation | null>(null);
+  const [silentEditMessages, setSilentEditMessages] = useState<ChatMessage[]>([]);
+  const [inlineEditingMsgId, setInlineEditingMsgId] = useState<string | null>(null);
+  const [inlineEditDraft, setInlineEditDraft] = useState('');
+  const [savingInlineSilentEdit, setSavingInlineSilentEdit] = useState(false);
+  const [silentEditFilterOnly, setSilentEditFilterOnly] = useState(false);
+  const [selectedChannelSubAdminId, setSelectedChannelSubAdminId] = useState<string | null>(null);
+
   // Individual Customer Device Login History Modal
   const [deviceHistoryCustomer, setDeviceHistoryCustomer] = useState<UserProfile | null>(null);
 
@@ -219,6 +235,192 @@ export const SuperAdminDashboard: React.FC = () => {
     () => buildAllCustomerDeviceLogins(customers, auditLogs),
     [customers, auditLogs]
   );
+
+  // Real-time message subscription for the selected customer chat inside Sub-Admin Edit
+  useEffect(() => {
+    if (!selectedSilentEditConv?.id) {
+      setSilentEditMessages([]);
+      return;
+    }
+    const unsub = subscribeToMessages(selectedSilentEditConv.id, 'super_admin', (msgs) => {
+      setSilentEditMessages(msgs);
+    });
+    return () => unsub();
+  }, [selectedSilentEditConv?.id]);
+
+  // Build deduplicated list of customer chats belonging to a specific Sub-Admin account
+  const getCustomerChatsForSubAdmin = (sub: UserProfile) => {
+    const map = new Map<
+      string,
+      {
+        customerId: string;
+        customerName: string;
+        customerEmail: string;
+        conversation: Conversation | null;
+        lastMessage: string;
+        lastMessageTime: string;
+      }
+    >();
+
+    const subNameLower = (sub.fullName || '').trim().toLowerCase();
+
+    // 1. Add all conversations linked to this Sub-Admin
+    conversations.forEach((conv) => {
+      const matchesSub =
+        conv.subAdminId === sub.uid ||
+        (subNameLower && (conv.subAdminName || '').trim().toLowerCase() === subNameLower);
+      if (matchesSub) {
+        map.set(conv.customerId, {
+          customerId: conv.customerId,
+          customerName: conv.customerName || 'Customer',
+          customerEmail: conv.customerEmail || '',
+          conversation: conv,
+          lastMessage: conv.lastMessage || conv.subAdminLastMessage || '',
+          lastMessageTime: conv.lastMessageTime || conv.updatedAt || ''
+        });
+      }
+    });
+
+    // 2. Add all customers assigned to this Sub-Admin (even if no messages yet, or matching existing conv)
+    customers
+      .filter((c) => c.assignedSubAdminId === sub.uid)
+      .forEach((cust) => {
+        const existingConv =
+          conversations.find((cv) => cv.customerId === cust.uid) ||
+          map.get(cust.uid)?.conversation ||
+          null;
+        map.set(cust.uid, {
+          customerId: cust.uid,
+          customerName: cust.fullName || existingConv?.customerName || 'Customer',
+          customerEmail: cust.email || existingConv?.customerEmail || '',
+          conversation: existingConv,
+          lastMessage: existingConv?.lastMessage || existingConv?.subAdminLastMessage || '',
+          lastMessageTime: existingConv?.lastMessageTime || existingConv?.updatedAt || ''
+        });
+      });
+
+    return Array.from(map.values()).sort((a, b) => {
+      const tA = a.lastMessageTime ? new Date(a.lastMessageTime).getTime() : 0;
+      const tB = b.lastMessageTime ? new Date(b.lastMessageTime).getTime() : 0;
+      if (tA !== tB) return tB - tA;
+      return a.customerName.localeCompare(b.customerName);
+    });
+  };
+
+  const handleSelectCustomerChatUnderSubAdmin = async (
+    sub: UserProfile,
+    entry: {
+      customerId: string;
+      customerName: string;
+      customerEmail: string;
+      conversation: Conversation | null;
+    },
+    openMode: 'full' | 'silent_edit'
+  ) => {
+    try {
+      let conv = entry.conversation;
+      if (!conv) {
+        conv = await getOrCreateConversation(
+          entry.customerId,
+          entry.customerName,
+          entry.customerEmail,
+          sub.uid,
+          sub.fullName
+        );
+        setConversations((prev) => (prev.some((c) => c.id === conv!.id) ? prev : [conv!, ...prev]));
+      }
+      if (openMode === 'full') {
+        setActiveChatConversation(conv);
+      } else {
+        setSelectedSilentEditConv(conv);
+        setInlineEditingMsgId(null);
+        setInlineEditDraft('');
+      }
+    } catch (err) {
+      console.error('Failed to open customer chat under Sub-Admin:', err);
+      showToast('Could not open customer chat. Please retry.', 'error');
+    }
+  };
+
+  const handleSaveInlineSilentEdit = async (msgId: string) => {
+    const trimmed = inlineEditDraft.trim();
+    if (!trimmed || savingInlineSilentEdit) return;
+    setSavingInlineSilentEdit(true);
+    try {
+      const archive = await silentEditSubAdminMessage(
+        msgId,
+        trimmed,
+        userProfile?.fullName || 'Super Admin',
+        'super_admin'
+      );
+      setSilentEditMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? {
+                ...m,
+                text: trimmed,
+                originalText: trimmed,
+                customerDisplayText: trimmed,
+                isEdited: false,
+                showOriginalToCustomer: false,
+                editedAt: undefined,
+                editedBy: undefined,
+                silentOriginalText: archive.silentOriginalText,
+                silentEditHistory: archive.silentEditHistory,
+                lastSilentEditedAt: archive.lastSilentEditedAt
+              }
+            : m
+        )
+      );
+      setInlineEditingMsgId(null);
+      setInlineEditDraft('');
+      showToast('Message updated silently. Old message is saved on the left for Super Admin.');
+    } catch (err: any) {
+      console.error('Inline silent edit failed:', err);
+      showToast(err?.message || 'Failed to update message.', 'error');
+    } finally {
+      setSavingInlineSilentEdit(false);
+    }
+  };
+
+  const handleRestoreOldSilentMessage = async (msgId: string, oldText: string) => {
+    const trimmed = oldText.trim();
+    if (!trimmed || savingInlineSilentEdit) return;
+    setSavingInlineSilentEdit(true);
+    try {
+      const archive = await silentEditSubAdminMessage(
+        msgId,
+        trimmed,
+        userProfile?.fullName || 'Super Admin',
+        'super_admin'
+      );
+      setSilentEditMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? {
+                ...m,
+                text: trimmed,
+                originalText: trimmed,
+                customerDisplayText: trimmed,
+                isEdited: false,
+                showOriginalToCustomer: false,
+                editedAt: undefined,
+                editedBy: undefined,
+                silentOriginalText: archive.silentOriginalText,
+                silentEditHistory: archive.silentEditHistory,
+                lastSilentEditedAt: archive.lastSilentEditedAt
+              }
+            : m
+        )
+      );
+      showToast('Old message restored silently.');
+    } catch (err: any) {
+      console.error('Restore old message failed:', err);
+      showToast(err?.message || 'Failed to restore old message.', 'error');
+    } finally {
+      setSavingInlineSilentEdit(false);
+    }
+  };
 
   useEffect(() => {
     loadAllData();
@@ -728,6 +930,58 @@ export const SuperAdminDashboard: React.FC = () => {
     }
   };
 
+  // Super Admin Feature: Enable/Disable Silent Message Editing for All Sub-Admins
+  const handleToggleAllSubAdminEdit = async () => {
+    const nextVal = !Boolean(settings?.subAdminCanEditOwnMessages);
+    try {
+      await updateAllSubAdminsCanEditMessages(nextVal, userProfile?.fullName || 'Super Admin');
+      setSettings(prev => (prev ? { ...prev, subAdminCanEditOwnMessages: nextVal } : prev));
+      setSubAdmins(prev => prev.map(s => ({ ...s, canEditOwnMessages: nextVal })));
+      setUsers(prev => prev.map(u => (u.role === 'sub_admin' ? { ...u, canEditOwnMessages: nextVal } : u)));
+      await addAuditLog(
+        'subadmin_silent_edit_toggle',
+        userProfile?.fullName || 'Super Admin',
+        'super_admin',
+        `Super Admin turned Sub-Admin Silent Message Edit ${nextVal ? 'ON for all Sub-Admins' : 'OFF for all Sub-Admins'}.`
+      ).catch(() => {});
+      showToast(
+        nextVal
+          ? 'Sub-Admin Silent Message Edit: ON (Sub-Admins can edit written messages silently).'
+          : 'Sub-Admin Silent Message Edit: OFF.'
+      );
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to update Sub-Admin message edit permission.', 'error');
+    }
+  };
+
+  // Super Admin Feature: Enable/Disable Silent Message Editing for a Single Sub-Admin
+  const handleToggleSingleSubAdminEdit = async (sub: UserProfile) => {
+    const currentlyEnabled =
+      sub.canEditOwnMessages !== undefined
+        ? sub.canEditOwnMessages === true
+        : Boolean(settings?.subAdminCanEditOwnMessages);
+    const nextVal = !currentlyEnabled;
+    try {
+      await updateSubAdminCanEditMessages(sub.uid, nextVal, sub.email);
+      setSubAdmins(prev => prev.map(s => (s.uid === sub.uid ? { ...s, canEditOwnMessages: nextVal } : s)));
+      setUsers(prev => prev.map(u => (u.uid === sub.uid ? { ...u, canEditOwnMessages: nextVal } : u)));
+      await addAuditLog(
+        'subadmin_silent_edit_toggle',
+        userProfile?.fullName || 'Super Admin',
+        'super_admin',
+        `Super Admin turned Silent Message Edit ${nextVal ? 'ON' : 'OFF'} for Sub-Admin ${sub.fullName} (${sub.email}).`,
+        sub.uid
+      ).catch(() => {});
+      showToast(
+        `${sub.fullName}: Silent Message Edit ${nextVal ? 'ON' : 'OFF'}.`
+      );
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to update Sub-Admin permission.', 'error');
+    }
+  };
+
   // Save Announcement
   const handleSaveAnnouncement = async () => {
     try {
@@ -977,6 +1231,42 @@ export const SuperAdminDashboard: React.FC = () => {
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 shrink-0">
                   {subAdmins.length}
                 </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveSection('subadmin_edit');
+                  setSidebarOpen(false);
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl sm:rounded-2xl text-xs font-bold cursor-pointer transition-colors ${
+                  activeSection === 'subadmin_edit'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-gray-700 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center space-x-2.5 min-w-0">
+                  <Edit className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Sub-Admin Edit</span>
+                </div>
+                {(() => {
+                  const enabledCount = subAdmins.filter(s =>
+                    s.canEditOwnMessages !== undefined
+                      ? s.canEditOwnMessages === true
+                      : Boolean(settings?.subAdminCanEditOwnMessages)
+                  ).length;
+                  const anyOn = enabledCount > 0 || Boolean(settings?.subAdminCanEditOwnMessages);
+                  return (
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold shrink-0 ${
+                      activeSection === 'subadmin_edit'
+                        ? 'bg-white/20 text-white'
+                        : anyOn
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {anyOn ? 'ON' : 'OFF'}
+                    </span>
+                  );
+                })()}
               </button>
 
               <button
@@ -1393,6 +1683,7 @@ export const SuperAdminDashboard: React.FC = () => {
                       <th className="py-3 px-4">Sub Admin Name & Email</th>
                       <th className="py-3 px-4">Regional Station</th>
                       <th className="py-3 px-4">Assigned Customers</th>
+                      <th className="py-3 px-4">Edit Written Messages</th>
                       <th className="py-3 px-4">Account Status</th>
                       <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
@@ -1400,6 +1691,10 @@ export const SuperAdminDashboard: React.FC = () => {
                   <tbody className="divide-y divide-gray-100">
                     {subAdmins.map((sub) => {
                       const assignedCusts = customers.filter(c => c.assignedSubAdminId === sub.uid);
+                      const canEditOwn =
+                        sub.canEditOwnMessages !== undefined
+                          ? sub.canEditOwnMessages === true
+                          : Boolean(settings?.subAdminCanEditOwnMessages);
 
                       return (
                         <tr key={sub.uid} className="hover:bg-slate-50/80 transition-colors">
@@ -1414,6 +1709,21 @@ export const SuperAdminDashboard: React.FC = () => {
                             <span className="font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
                               {assignedCusts.length} Active Consignees
                             </span>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleSingleSubAdminEdit(sub)}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-colors cursor-pointer inline-flex items-center space-x-1.5 border ${
+                                canEditOwn
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                  : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                              }`}
+                              title="Allow this Sub Admin to silently edit messages they already wrote (remains like never edited)"
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${canEditOwn ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                              <span>{canEditOwn ? 'Silent Edit: ON' : 'Silent Edit: OFF'}</span>
+                            </button>
                           </td>
                           <td className="py-3.5 px-4">
                             {sub.isSuspended ? (
@@ -1457,6 +1767,625 @@ export const SuperAdminDashboard: React.FC = () => {
                     })}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* SECTION 2B: SUB-ADMIN SILENT MESSAGE EDIT CONTROL */}
+          {activeSection === 'subadmin_edit' && (
+            <div className="bg-white rounded-2xl border border-gray-200 p-5 sm:p-6 shadow-xs space-y-6 animate-fadeIn">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-600 flex items-center justify-center text-white shadow-sm shrink-0">
+                    <Edit className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-black text-gray-900">
+                      Sub-Admin Silent Message Edit Control
+                    </h2>
+                    <p className="text-xs text-gray-500">
+                      Allow Sub-Admins to edit messages they have already written. After saving, the message updates silently and remains like it was never edited.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Master Switch Banner */}
+              <div className="p-5 rounded-2xl border border-gray-200 bg-gradient-to-r from-[#0b132b] to-[#1c2541] text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${settings?.subAdminCanEditOwnMessages ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'}`} />
+                    <h3 className="font-extrabold text-sm sm:text-base">
+                      Master Control: All Sub-Admins Can Edit Written Messages
+                    </h3>
+                  </div>
+                  <p className="text-xs text-gray-300 leading-relaxed max-w-2xl">
+                    When turned <strong className="text-emerald-300">ON</strong>, Sub-Admins see an <strong>Edit Message</strong> button on messages they already sent. Once saved, the message updates directly with <strong>no &ldquo;Edited&rdquo; tag, no edit history badge, and the exact original timestamp</strong> — remaining like it was never edited.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleAllSubAdminEdit}
+                  className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wide shadow-md transition-all cursor-pointer shrink-0 self-start md:self-auto ${
+                    settings?.subAdminCanEditOwnMessages
+                      ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+                      : 'bg-slate-200 hover:bg-white text-slate-900'
+                  }`}
+                >
+                  {settings?.subAdminCanEditOwnMessages ? 'ALL SUB-ADMINS: ON (Turn OFF)' : 'ALL SUB-ADMINS: OFF (Turn ON)'}
+                </button>
+              </div>
+
+              {/* Individual Sub-Admin Accounts — Select Any Sub-Admin to View & Edit Their Customer Chats Underneath */}
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <h3 className="text-sm font-extrabold text-gray-900">
+                    Individual Sub-Admin Access &amp; Customer Chats ({subAdmins.length})
+                  </h3>
+                  <span className="text-[11px] text-gray-500">
+                    Select any Sub-Admin account below to view their customer message chats underneath
+                  </span>
+                </div>
+
+                {subAdmins.length === 0 ? (
+                  <div className="p-8 text-center rounded-2xl bg-slate-50 border border-dashed border-gray-200 text-xs text-gray-500">
+                    No Sub-Admin accounts found. Create a Sub-Admin account first to assign message edit access.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {subAdmins.map((sub) => {
+                      const subCustomerChats = getCustomerChatsForSubAdmin(sub);
+                      const isEnabled =
+                        sub.canEditOwnMessages !== undefined
+                          ? sub.canEditOwnMessages === true
+                          : Boolean(settings?.subAdminCanEditOwnMessages);
+                      const isExpanded = selectedEditSubAdminId === sub.uid;
+
+                      return (
+                        <div
+                          key={sub.uid}
+                          className={`border rounded-2xl overflow-hidden transition-all ${
+                            isExpanded
+                              ? 'border-blue-400 shadow-sm ring-2 ring-blue-100'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          {/* Sub-Admin Account Header Row (Selectable) */}
+                          <div
+                            onClick={() => {
+                              if (isExpanded) {
+                                setSelectedEditSubAdminId(null);
+                                setSelectedSilentEditConv(null);
+                              } else {
+                                setSelectedEditSubAdminId(sub.uid);
+                                setSelectedSilentEditConv(null);
+                              }
+                            }}
+                            className={`p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 cursor-pointer transition-colors ${
+                              isExpanded ? 'bg-blue-50/70' : 'bg-white hover:bg-slate-50/80'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-3 min-w-0">
+                              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                                isExpanded ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {isExpanded ? (
+                                  <ChevronDown className="w-4 h-4" />
+                                ) : (
+                                  <ChevronRight className="w-4 h-4" />
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-extrabold text-sm text-gray-900 truncate">
+                                  {sub.fullName}
+                                </div>
+                                <div className="text-[11px] text-gray-500 font-mono truncate">
+                                  {sub.email}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2.5">
+                              <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-800 font-extrabold text-[11px] inline-flex items-center space-x-1.5">
+                                <MessageSquare className="w-3.5 h-3.5" />
+                                <span>
+                                  {subCustomerChats.length} Customer Chat{subCustomerChats.length !== 1 ? 's' : ''}
+                                </span>
+                              </span>
+
+                              <span className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold ${
+                                isEnabled
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${isEnabled ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                                <span>{isEnabled ? 'ALLOWED' : 'DISABLED'}</span>
+                              </span>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleSingleSubAdminEdit(sub);
+                                }}
+                                className={`px-4 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-xs ${
+                                  isEnabled
+                                    ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
+                                    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                }`}
+                              >
+                                {isEnabled ? 'Turn OFF' : 'Turn ON'}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Customer Message Chats Directly Under This Selected Sub-Admin Account */}
+                          {isExpanded && (
+                            <div className="border-t border-blue-200/80 bg-slate-50/70 p-4 space-y-4">
+                              <div className="flex items-center justify-between">
+                                <div className="text-xs font-extrabold text-gray-800 flex items-center space-x-2">
+                                  <Users className="w-4 h-4 text-blue-600" />
+                                  <span>Customer Message Chats Under {sub.fullName}</span>
+                                </div>
+                                <span className="text-[11px] text-gray-500">
+                                  Select a customer to view messages &amp; edit Sub-Admin messages silently
+                                </span>
+                              </div>
+
+                              {subCustomerChats.length === 0 ? (
+                                <div className="p-6 text-center rounded-xl bg-white border border-dashed border-gray-200 text-xs text-gray-500">
+                                  No customers are currently assigned to {sub.fullName}.
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {subCustomerChats.map((entry) => {
+                                    const isChatSelected =
+                                      selectedSilentEditConv &&
+                                      (selectedSilentEditConv.customerId === entry.customerId ||
+                                        (entry.conversation && selectedSilentEditConv.id === entry.conversation.id));
+
+                                    return (
+                                      <div
+                                        key={entry.customerId}
+                                        className={`p-3.5 rounded-xl border transition-all space-y-2.5 ${
+                                          isChatSelected
+                                            ? 'bg-blue-50 border-blue-400 shadow-xs'
+                                            : 'bg-white border-gray-200 hover:border-blue-300'
+                                        }`}
+                                      >
+                                        <div className="flex items-start justify-between gap-2">
+                                          <div className="min-w-0">
+                                            <div className="font-extrabold text-xs text-gray-900 truncate">
+                                              {entry.customerName}
+                                            </div>
+                                            <div className="text-[11px] text-gray-500 font-mono truncate">
+                                              {entry.customerEmail}
+                                            </div>
+                                          </div>
+                                          {entry.lastMessageTime && (
+                                            <span className="text-[10px] text-gray-400 font-mono shrink-0">
+                                              {new Date(entry.lastMessageTime).toLocaleDateString([], {
+                                                month: 'short',
+                                                day: 'numeric'
+                                              })}{' '}
+                                              {new Date(entry.lastMessageTime).toLocaleTimeString([], {
+                                                hour: '2-digit',
+                                                minute: '2-digit'
+                                              })}
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <p className="text-[11px] text-gray-600 line-clamp-1 italic bg-slate-50 px-2.5 py-1.5 rounded-lg border border-gray-100">
+                                          {entry.lastMessage ? `"${entry.lastMessage}"` : 'No messages yet'}
+                                        </p>
+
+                                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleSelectCustomerChatUnderSubAdmin(sub, entry, 'silent_edit')
+                                            }
+                                            className={`px-3 py-1.5 rounded-lg text-[11px] font-extrabold inline-flex items-center space-x-1.5 cursor-pointer transition-colors ${
+                                              isChatSelected
+                                                ? 'bg-emerald-600 text-white'
+                                                : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                            }`}
+                                          >
+                                            <Edit className="w-3.5 h-3.5" />
+                                            <span>{isChatSelected ? 'Viewing Chat Below' : 'View & Silent Edit'}</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleSelectCustomerChatUnderSubAdmin(sub, entry, 'full')
+                                            }
+                                            className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center space-x-1 cursor-pointer transition-colors"
+                                          >
+                                            <MessageSquare className="w-3.5 h-3.5" />
+                                            <span>Open Full Chat</span>
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Inline Live Chat Thread Under This Sub-Admin Account for Direct Silent Editing & Old Message Comparison */}
+                              {selectedSilentEditConv && (() => {
+                                const silentlyEditedCount = silentEditMessages.filter(
+                                  (m) =>
+                                    (m.silentEditHistory && m.silentEditHistory.length > 0) ||
+                                    Boolean(m.silentOriginalText && m.silentOriginalText !== m.text)
+                                ).length;
+                                const displayedSilentMessages = silentEditFilterOnly
+                                  ? silentEditMessages.filter(
+                                      (m) =>
+                                        (m.silentEditHistory && m.silentEditHistory.length > 0) ||
+                                        Boolean(m.silentOriginalText && m.silentOriginalText !== m.text)
+                                    )
+                                  : silentEditMessages;
+
+                                return (
+                                  <div className="mt-3 bg-white border border-blue-200 rounded-2xl overflow-hidden shadow-xs">
+                                    <div className="px-4 py-3 bg-[#0b132b] text-white flex flex-wrap items-center justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <div className="text-xs font-extrabold flex items-center space-x-2">
+                                          <MessageSquare className="w-4 h-4 text-emerald-400 shrink-0" />
+                                          <span className="truncate">
+                                            Chat: {selectedSilentEditConv.customerName} ↔ {sub.fullName}
+                                          </span>
+                                        </div>
+                                        <div className="text-[10px] text-gray-300 mt-0.5">
+                                          Old messages before silent edits appear on the left side (Super Admin only). Customer &amp; Sub-Admin only see the live message on the right.
+                                        </div>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <div className="inline-flex rounded-lg bg-white/10 p-0.5 text-[10px] font-extrabold">
+                                          <button
+                                            type="button"
+                                            onClick={() => setSilentEditFilterOnly(false)}
+                                            className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
+                                              !silentEditFilterOnly
+                                                ? 'bg-white text-slate-950'
+                                                : 'text-gray-200 hover:text-white'
+                                            }`}
+                                          >
+                                            All ({silentEditMessages.length})
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setSilentEditFilterOnly(true)}
+                                            className={`px-2.5 py-1 rounded-md cursor-pointer transition-colors ${
+                                              silentEditFilterOnly
+                                                ? 'bg-amber-400 text-slate-950'
+                                                : 'text-amber-300 hover:text-amber-200'
+                                            }`}
+                                          >
+                                            Old / Edited ({silentlyEditedCount})
+                                          </button>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => setActiveChatConversation(selectedSilentEditConv)}
+                                          className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold cursor-pointer"
+                                        >
+                                          Open Full Chat
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedSilentEditConv(null);
+                                            setInlineEditingMsgId(null);
+                                            setSilentEditFilterOnly(false);
+                                          }}
+                                          className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-200 cursor-pointer"
+                                          title="Close chat preview"
+                                        >
+                                          <X className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    <div className="p-4 max-h-[620px] overflow-y-auto space-y-3.5 bg-slate-50">
+                                      {displayedSilentMessages.length === 0 ? (
+                                        <div className="text-center py-8 text-xs text-gray-400">
+                                          {silentEditFilterOnly
+                                            ? 'No silently edited messages in this chat yet. Once a Sub-Admin message is edited silently, its old version will appear here side-by-side.'
+                                            : 'No messages in this chat yet.'}
+                                        </div>
+                                      ) : (
+                                        displayedSilentMessages.map((msg) => {
+                                          const isCustomerMsg = msg.senderRole === 'customer';
+                                          const isSubAdminMsg = msg.senderRole === 'sub_admin';
+                                          const isEditingThis = inlineEditingMsgId === msg.id;
+                                          const history = msg.silentEditHistory || [];
+                                          const hasOldSilentMessage =
+                                            history.length > 0 ||
+                                            Boolean(msg.silentOriginalText && msg.silentOriginalText !== msg.text);
+                                          const oldestText = msg.silentOriginalText || history[0]?.previousText || '';
+
+                                          // Side-by-side layout whenever a message was silently edited:
+                                          // LEFT = Old Message Before Silent Edit | RIGHT = Current Live Message (Shown as Never Edited)
+                                          if (hasOldSilentMessage) {
+                                            return (
+                                              <div
+                                                key={msg.id}
+                                                className="p-3 rounded-2xl bg-white border border-amber-200/90 shadow-2xs space-y-2"
+                                              >
+                                                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-bold text-gray-500 px-0.5">
+                                                  <div className="flex items-center space-x-2">
+                                                    <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-black uppercase tracking-wider">
+                                                      Silently Edited ({history.length || 1}x)
+                                                    </span>
+                                                    <span className="text-gray-700">
+                                                      {isSubAdminMsg ? `${sub.fullName} (Sub-Admin)` : msg.senderName}
+                                                    </span>
+                                                  </div>
+                                                  <span className="font-mono text-gray-400">
+                                                    Original sent:{' '}
+                                                    {new Date(msg.createdAt).toLocaleString([], {
+                                                      month: 'short',
+                                                      day: 'numeric',
+                                                      hour: '2-digit',
+                                                      minute: '2-digit'
+                                                    })}
+                                                  </span>
+                                                </div>
+
+                                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
+                                                  {/* LEFT SIDE: Old Message Before Silent Edit */}
+                                                  <div className="rounded-2xl p-3.5 bg-amber-50 border border-amber-300 text-amber-950 space-y-2.5">
+                                                    <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-amber-200/90">
+                                                      <div className="flex items-center space-x-1.5">
+                                                        <History className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                                                        <span className="text-[10px] font-black uppercase tracking-wider text-amber-900">
+                                                          Old Message (Before Silent Edit)
+                                                        </span>
+                                                      </div>
+                                                      {msg.lastSilentEditedAt && (
+                                                        <span className="text-[10px] font-mono text-amber-700 shrink-0">
+                                                          {new Date(msg.lastSilentEditedAt).toLocaleTimeString([], {
+                                                            hour: '2-digit',
+                                                            minute: '2-digit'
+                                                          })}
+                                                        </span>
+                                                      )}
+                                                    </div>
+
+                                                    <div className="text-xs leading-relaxed whitespace-pre-wrap break-words bg-white p-3 rounded-xl border border-amber-200 text-gray-900 font-medium">
+                                                      {oldestText}
+                                                    </div>
+
+                                                    {history.length > 1 && (
+                                                      <div className="space-y-1.5 pt-1 border-t border-amber-200/80">
+                                                        <div className="text-[10px] font-extrabold text-amber-900">
+                                                          Additional Earlier Versions ({history.length - 1}):
+                                                        </div>
+                                                        {history.slice(1).map((rev, revIdx) => (
+                                                          <div
+                                                            key={`${msg.id}_hist_${revIdx}`}
+                                                            className="p-2 rounded-lg bg-white/90 border border-amber-200 text-[11px] space-y-1"
+                                                          >
+                                                            <div className="flex items-center justify-between text-[10px] text-amber-700 font-mono">
+                                                              <span>Version #{revIdx + 2} ({rev.editedBy || 'Admin'})</span>
+                                                              <span>
+                                                                {new Date(rev.editedAt).toLocaleString([], {
+                                                                  month: 'short',
+                                                                  day: 'numeric',
+                                                                  hour: '2-digit',
+                                                                  minute: '2-digit'
+                                                                })}
+                                                              </span>
+                                                            </div>
+                                                            <div className="whitespace-pre-wrap break-words text-gray-800">
+                                                              {rev.previousText}
+                                                            </div>
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    )}
+
+                                                    {isSubAdminMsg && oldestText && oldestText !== msg.text && (
+                                                      <div className="flex justify-end pt-0.5">
+                                                        <button
+                                                          type="button"
+                                                          disabled={savingInlineSilentEdit}
+                                                          onClick={() => handleRestoreOldSilentMessage(msg.id, oldestText)}
+                                                          className="px-3 py-1 rounded-lg bg-amber-200 hover:bg-amber-300 text-amber-950 text-[10px] font-black cursor-pointer transition-colors disabled:opacity-50"
+                                                        >
+                                                          Restore Old Message Silently
+                                                        </button>
+                                                      </div>
+                                                    )}
+                                                  </div>
+
+                                                  {/* RIGHT SIDE: Current Live Message (Shown to Customer & Sub-Admin as Never Edited) */}
+                                                  <div className="rounded-2xl p-3.5 bg-blue-600 text-white space-y-2.5">
+                                                    <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-white/20">
+                                                      <span className="text-[10px] font-black uppercase tracking-wider text-blue-100">
+                                                        Current Live Message (Never-Edited View)
+                                                      </span>
+                                                      <span className="text-[10px] font-mono text-blue-200">
+                                                        Live Now
+                                                      </span>
+                                                    </div>
+
+                                                    {isEditingThis ? (
+                                                      <div className="space-y-3 w-full">
+                                                        <textarea
+                                                          rows={7}
+                                                          value={inlineEditDraft}
+                                                          onChange={(e) => setInlineEditDraft(e.target.value)}
+                                                          className="w-full min-h-[165px] p-3.5 rounded-xl bg-white text-gray-900 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-y"
+                                                        />
+                                                        <div className="flex items-center justify-end space-x-2.5">
+                                                          <button
+                                                            type="button"
+                                                            disabled={savingInlineSilentEdit}
+                                                            onClick={() => {
+                                                              setInlineEditingMsgId(null);
+                                                              setInlineEditDraft('');
+                                                            }}
+                                                            className="px-3.5 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white text-xs font-bold cursor-pointer"
+                                                          >
+                                                            Cancel
+                                                          </button>
+                                                          <button
+                                                            type="button"
+                                                            disabled={savingInlineSilentEdit || !inlineEditDraft.trim()}
+                                                            onClick={() => handleSaveInlineSilentEdit(msg.id)}
+                                                            className="px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black cursor-pointer disabled:opacity-50"
+                                                          >
+                                                            {savingInlineSilentEdit ? 'Saving...' : 'Save Silently'}
+                                                          </button>
+                                                        </div>
+                                                      </div>
+                                                    ) : (
+                                                      <>
+                                                        {msg.text && (
+                                                          <div className="text-xs whitespace-pre-wrap break-words leading-relaxed">
+                                                            {msg.text}
+                                                          </div>
+                                                        )}
+                                                        {msg.attachmentUrl && (
+                                                          <div className="text-[11px] italic opacity-90">
+                                                            [Attachment: {msg.attachmentName || msg.attachmentType || 'Media'}]
+                                                          </div>
+                                                        )}
+                                                        {isSubAdminMsg && (
+                                                          <div className="pt-1 border-t border-white/20 flex justify-end">
+                                                            <button
+                                                              type="button"
+                                                              onClick={() => {
+                                                                setInlineEditingMsgId(msg.id);
+                                                                setInlineEditDraft(msg.originalText || msg.text || '');
+                                                              }}
+                                                              className="px-2.5 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-white text-[10px] font-extrabold inline-flex items-center space-x-1 cursor-pointer transition-colors"
+                                                            >
+                                                              <Edit className="w-3 h-3" />
+                                                              <span>Edit Silently</span>
+                                                            </button>
+                                                          </div>
+                                                        )}
+                                                      </>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            );
+                                          }
+
+                                          return (
+                                            <div
+                                              key={msg.id}
+                                              className={`flex flex-col ${isCustomerMsg ? 'items-start' : 'items-end'}`}
+                                            >
+                                              <div className="text-[10px] font-bold text-gray-500 mb-0.5 px-1 flex items-center space-x-1.5">
+                                                <span>
+                                                  {isCustomerMsg
+                                                    ? msg.senderName || selectedSilentEditConv.customerName
+                                                    : isSubAdminMsg
+                                                    ? `${sub.fullName} (Sub-Admin)`
+                                                    : 'Super Admin'}
+                                                </span>
+                                                <span className="font-mono text-gray-400">
+                                                  {new Date(msg.createdAt).toLocaleString([], {
+                                                    month: 'short',
+                                                    day: 'numeric',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit'
+                                                  })}
+                                                </span>
+                                              </div>
+
+                                              <div
+                                                className={`${
+                                                  isEditingThis
+                                                    ? 'w-full sm:w-[92%] max-w-2xl px-4 py-3.5'
+                                                    : 'max-w-[90%] sm:max-w-[78%] px-3.5 py-2.5'
+                                                } rounded-2xl text-xs space-y-2.5 ${
+                                                  isCustomerMsg
+                                                    ? 'bg-white border border-gray-200 text-gray-800 rounded-tl-none'
+                                                    : 'bg-blue-600 text-white rounded-tr-none'
+                                                }`}
+                                              >
+                                                {isEditingThis ? (
+                                                  <div className="space-y-3 w-full">
+                                                    <textarea
+                                                      rows={7}
+                                                      value={inlineEditDraft}
+                                                      onChange={(e) => setInlineEditDraft(e.target.value)}
+                                                      className="w-full min-h-[165px] p-3.5 rounded-xl bg-white text-gray-900 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-y"
+                                                    />
+                                                    <div className="flex items-center justify-end space-x-2.5">
+                                                      <button
+                                                        type="button"
+                                                        disabled={savingInlineSilentEdit}
+                                                        onClick={() => {
+                                                          setInlineEditingMsgId(null);
+                                                          setInlineEditDraft('');
+                                                        }}
+                                                        className="px-3.5 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white text-xs font-bold cursor-pointer"
+                                                      >
+                                                        Cancel
+                                                      </button>
+                                                      <button
+                                                        type="button"
+                                                        disabled={savingInlineSilentEdit || !inlineEditDraft.trim()}
+                                                        onClick={() => handleSaveInlineSilentEdit(msg.id)}
+                                                        className="px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black cursor-pointer disabled:opacity-50"
+                                                      >
+                                                        {savingInlineSilentEdit ? 'Saving...' : 'Save Silently'}
+                                                      </button>
+                                                    </div>
+                                                  </div>
+                                                ) : (
+                                                  <>
+                                                    {msg.text && (
+                                                      <div className="whitespace-pre-wrap break-words leading-relaxed">
+                                                        {msg.text}
+                                                      </div>
+                                                    )}
+                                                    {msg.attachmentUrl && (
+                                                      <div className="text-[11px] italic opacity-90">
+                                                        [Attachment: {msg.attachmentName || msg.attachmentType || 'Media'}]
+                                                      </div>
+                                                    )}
+                                                    {isSubAdminMsg && (
+                                                      <div className="pt-1 border-t border-white/20 flex justify-end">
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => {
+                                                            setInlineEditingMsgId(msg.id);
+                                                            setInlineEditDraft(msg.originalText || msg.text || '');
+                                                          }}
+                                                          className="px-2.5 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-white text-[10px] font-extrabold inline-flex items-center space-x-1 cursor-pointer transition-colors"
+                                                        >
+                                                          <Edit className="w-3 h-3" />
+                                                          <span>Edit Silently</span>
+                                                        </button>
+                                                      </div>
+                                                    )}
+                                                  </>
+                                                )}
+                                              </div>
+                                            </div>
+                                          );
+                                        })
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1948,46 +2877,192 @@ export const SuperAdminDashboard: React.FC = () => {
             </div>
           )}
 
-          {/* SECTION 6: ALL MESSAGING CHANNELS */}
+          {/* SECTION 6: ALL MESSAGING CHANNELS — GROUPED UNDER EACH SELECTABLE SUB-ADMIN ACCOUNT */}
           {activeSection === 'messages' && (
-            <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-6 animate-fadeIn">
-              <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+            <div className="bg-white rounded-2xl border border-gray-200 p-5 sm:p-6 shadow-xs space-y-5 animate-fadeIn">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-gray-100">
                 <div>
                   <h2 className="text-lg font-black text-gray-900">Live Customer Communications</h2>
                   <p className="text-xs text-gray-500">
-                    Monitor conversations between customers and Sub Admins. Intervene, correct, or announce.
+                    Select any Sub-Admin account below to view and open their customer message chats.
                   </p>
                 </div>
+                <span className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1 rounded-full self-start sm:self-auto">
+                  {subAdmins.length} Sub-Admin{subAdmins.length !== 1 ? 's' : ''} • {conversations.length} Active Chat{conversations.length !== 1 ? 's' : ''}
+                </span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {conversations.map((conv) => (
-                  <div
-                    key={conv.id}
-                    onClick={() => setActiveChatConversation(conv)}
-                    className="p-5 bg-slate-50 border border-gray-200 rounded-2xl hover:border-blue-400 cursor-pointer transition-all space-y-2 group"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-sm text-gray-900 group-hover:text-blue-600">
-                        {conv.customerName}
-                      </span>
-                      <span className="text-[10px] text-gray-400 font-mono">
-                        {new Date(conv.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
+              <div className="space-y-3">
+                {subAdmins.map((sub) => {
+                  const subChats = getCustomerChatsForSubAdmin(sub);
+                  const isSelected = selectedChannelSubAdminId === sub.uid;
+
+                  return (
+                    <div
+                      key={sub.uid}
+                      className={`border rounded-2xl overflow-hidden transition-all ${
+                        isSelected
+                          ? 'border-blue-400 shadow-sm ring-2 ring-blue-100'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setSelectedChannelSubAdminId(isSelected ? null : sub.uid)}
+                        className={`w-full p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left cursor-pointer transition-colors ${
+                          isSelected ? 'bg-blue-50/70' : 'bg-white hover:bg-slate-50/80'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-3 min-w-0">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                            isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            {isSelected ? (
+                              <ChevronDown className="w-4 h-4" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-extrabold text-sm text-gray-900 truncate">
+                              {sub.fullName}
+                            </div>
+                            <div className="text-[11px] text-gray-500 font-mono truncate">
+                              {sub.email}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-2 shrink-0">
+                          <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-800 font-extrabold text-xs inline-flex items-center space-x-1.5">
+                            <MessageSquare className="w-3.5 h-3.5" />
+                            <span>
+                              {subChats.length} Customer Chat{subChats.length !== 1 ? 's' : ''}
+                            </span>
+                          </span>
+                          <span className="text-xs font-bold text-blue-600">
+                            {isSelected ? 'Hide Chats' : 'Select'}
+                          </span>
+                        </div>
+                      </button>
+
+                      {isSelected && (
+                        <div className="border-t border-blue-200/80 bg-slate-50/70 p-4">
+                          {subChats.length === 0 ? (
+                            <div className="p-6 text-center rounded-xl bg-white border border-dashed border-gray-200 text-xs text-gray-500">
+                              No customer message chats under {sub.fullName} yet.
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {subChats.map((entry) => (
+                                <div
+                                  key={entry.customerId}
+                                  onClick={() => handleSelectCustomerChatUnderSubAdmin(sub, entry, 'full')}
+                                  className="p-4 bg-white border border-gray-200 rounded-xl hover:border-blue-400 cursor-pointer transition-all space-y-2 group shadow-2xs"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <div className="font-bold text-sm text-gray-900 group-hover:text-blue-600 truncate">
+                                        {entry.customerName}
+                                      </div>
+                                      <div className="text-[11px] text-gray-500 font-mono truncate">
+                                        {entry.customerEmail}
+                                      </div>
+                                    </div>
+                                    {entry.lastMessageTime && (
+                                      <span className="text-[10px] text-gray-400 font-mono shrink-0">
+                                        {new Date(entry.lastMessageTime).toLocaleTimeString([], {
+                                          hour: '2-digit',
+                                          minute: '2-digit'
+                                        })}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-gray-600 line-clamp-1 italic bg-slate-50 p-2 rounded-lg border border-gray-100">
+                                    {entry.lastMessage ? `"${entry.lastMessage}"` : 'No messages yet — click to start chat'}
+                                  </p>
+                                  <div className="text-[11px] font-bold text-blue-600 pt-0.5 flex items-center space-x-1">
+                                    <span>Open Chat with {entry.customerName}</span>
+                                    <ChevronRight className="w-3.5 h-3.5" />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-xs text-gray-500 flex items-center space-x-1">
-                      <span>Assigned Sub Admin:</span>
-                      <strong className="text-gray-700">{conv.subAdminName || 'None'}</strong>
+                  );
+                })}
+
+                {/* Unassigned / Other Chats if any exist outside current Sub-Admin IDs */}
+                {(() => {
+                  const assignedSubIds = new Set(subAdmins.map((s) => s.uid));
+                  const assignedSubNames = new Set(subAdmins.map((s) => (s.fullName || '').trim().toLowerCase()));
+                  const unassignedConvs = conversations.filter(
+                    (c) =>
+                      !assignedSubIds.has(c.subAdminId) &&
+                      !assignedSubNames.has((c.subAdminName || '').trim().toLowerCase())
+                  );
+                  if (unassignedConvs.length === 0) return null;
+                  const isUnassignedOpen = selectedChannelSubAdminId === '__unassigned__';
+                  return (
+                    <div className="border border-amber-200 rounded-2xl overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedChannelSubAdminId(isUnassignedOpen ? null : '__unassigned__')
+                        }
+                        className="w-full p-4 bg-amber-50/70 hover:bg-amber-50 flex items-center justify-between text-left cursor-pointer"
+                      >
+                        <div className="flex items-center space-x-3">
+                          <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                            {isUnassignedOpen ? (
+                              <ChevronDown className="w-4 h-4" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4" />
+                            )}
+                          </div>
+                          <div>
+                            <div className="font-extrabold text-sm text-amber-950">
+                              Unassigned / Other Customer Chats
+                            </div>
+                            <div className="text-[11px] text-amber-700">
+                              Conversations not yet linked to an active Sub-Admin
+                            </div>
+                          </div>
+                        </div>
+                        <span className="px-3 py-1 rounded-full bg-amber-200 text-amber-950 font-extrabold text-xs">
+                          {unassignedConvs.length} Chat{unassignedConvs.length !== 1 ? 's' : ''}
+                        </span>
+                      </button>
+                      {isUnassignedOpen && (
+                        <div className="p-4 bg-slate-50 grid grid-cols-1 md:grid-cols-2 gap-3 border-t border-amber-200">
+                          {unassignedConvs.map((conv) => (
+                            <div
+                              key={conv.id}
+                              onClick={() => setActiveChatConversation(conv)}
+                              className="p-4 bg-white border border-gray-200 rounded-xl hover:border-blue-400 cursor-pointer space-y-1.5"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-sm text-gray-900">{conv.customerName}</span>
+                                <span className="text-[10px] text-gray-400 font-mono">
+                                  {new Date(conv.lastMessageTime).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  })}
+                                </span>
+                              </div>
+                              <p className="text-xs text-gray-600 line-clamp-1 italic bg-slate-50 p-2 rounded-lg border border-gray-100">
+                                &quot;{conv.lastMessage}&quot;
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <p className="text-xs text-gray-600 line-clamp-1 italic bg-white p-2 rounded-lg border border-gray-100">
-                      &quot;{conv.lastMessage}&quot;
-                    </p>
-                    <div className="text-[11px] font-bold text-blue-600 pt-1 flex items-center space-x-1">
-                      <span>Open Thread & Intervene as Super Admin</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </div>
-                  </div>
-                ))}
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -2448,6 +3523,27 @@ export const SuperAdminDashboard: React.FC = () => {
                     }`}
                   >
                     {settings?.customerMessagesToSubAdminAutoOn !== false ? 'AUTO ON' : 'OFF (Manual)'}
+                  </button>
+                </div>
+
+                {/* Sub-Admin Silent Message Edit Switch */}
+                <div className="p-4 sm:p-5 bg-slate-50 border border-gray-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h4 className="font-bold text-sm text-gray-900">Sub-Admin Silent Edit (Own Written Messages)</h4>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Lets Sub-Admins edit messages they already sent. After editing, the message remains like it was never edited (no &ldquo;Edited&rdquo; label, same original time).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleAllSubAdminEdit}
+                    className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 self-start sm:self-auto ${
+                      settings?.subAdminCanEditOwnMessages
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md'
+                        : 'bg-slate-700 hover:bg-slate-800 text-white shadow-md'
+                    }`}
+                  >
+                    {settings?.subAdminCanEditOwnMessages ? 'ENABLED (ON)' : 'DISABLED (OFF)'}
                   </button>
                 </div>
 

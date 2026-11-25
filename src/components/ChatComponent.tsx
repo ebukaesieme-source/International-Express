@@ -32,6 +32,7 @@ import {
   subscribeToMessages,
   sendMessage,
   editMessage,
+  silentEditSubAdminMessage,
   toggleMessageOriginalForCustomer,
   deleteMessage,
   toggleMessageSubAdminAccess,
@@ -76,6 +77,15 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const [deletingMessage, setDeletingMessage] = useState<ChatMessage | null>(null);
   const [isDeletingMessage, setIsDeletingMessage] = useState(false);
 
+  // Silent Edit states for Sub-Admin (controlled by Super Admin)
+  const [globalSubAdminCanEdit, setGlobalSubAdminCanEdit] = useState(false);
+  const [liveSubAdminCanEdit, setLiveSubAdminCanEdit] = useState<boolean | undefined>(
+    currentUserProfile.canEditOwnMessages
+  );
+  const [subAdminEditingMessage, setSubAdminEditingMessage] = useState<ChatMessage | null>(null);
+  const [subAdminEditText, setSubAdminEditText] = useState('');
+  const [savingSubAdminEdit, setSavingSubAdminEdit] = useState(false);
+
   // Lightbox for media viewing
   const [lightboxMedia, setLightboxMedia] = useState<{ url: string; name: string } | null>(null);
 
@@ -85,7 +95,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const customerMessagesAutoOnRef = useRef<boolean>(true);
 
   useEffect(() => {
-    // Subscribe in real-time to system settings so moderation changes sync instantly across phones, tablets, and PCs
+    // Subscribe in real-time to system settings so moderation & Sub-Admin edit permissions sync instantly
     const unsubSettings = subscribeToSystemSettings((settings) => {
       if (settings) {
         const autoOn =
@@ -94,8 +104,19 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
             : !settings.messageModeration;
         customerMessagesAutoOnRef.current = autoOn;
         setCustomerMessagesAutoOn(autoOn);
+        setGlobalSubAdminCanEdit(Boolean(settings.subAdminCanEditOwnMessages));
       }
     });
+
+    // Subscribe in real-time to Sub-Admin's own profile so individual edit permission toggles apply immediately
+    let unsubOwnProfile: (() => void) | null = null;
+    if (currentUserProfile.role === 'sub_admin' && currentUserProfile.uid) {
+      unsubOwnProfile = subscribeToUserProfile(currentUserProfile.uid, (profile) => {
+        if (profile) {
+          setLiveSubAdminCanEdit(profile.canEditOwnMessages);
+        }
+      });
+    }
 
     // Mark conversation read for this role
     markConversationRead(conversation.id, currentUserProfile.role).catch(() => {});
@@ -124,13 +145,16 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
     return () => {
       unsubSettings();
+      if (unsubOwnProfile) {
+        unsubOwnProfile();
+      }
       unsubscribe();
       unsubPresence();
       if (unsubFallbackPresence) {
         unsubFallbackPresence();
       }
     };
-  }, [conversation.id, conversation.customerId, conversation.customerName, currentUserProfile.role]);
+  }, [conversation.id, conversation.customerId, conversation.customerName, currentUserProfile.role, currentUserProfile.uid]);
 
 
   const scrollToBottom = () => {
@@ -287,6 +311,48 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
     }
   };
 
+  const handleSaveSubAdminSilentEdit = async () => {
+    if (!subAdminEditingMessage || !subAdminEditText.trim() || savingSubAdminEdit) return;
+    const trimmed = subAdminEditText.trim();
+    const targetId = subAdminEditingMessage.id;
+    setSavingSubAdminEdit(true);
+    setChatError(null);
+    try {
+      const archive = await silentEditSubAdminMessage(
+        targetId,
+        trimmed,
+        currentUserProfile.fullName,
+        currentUserProfile.role
+      );
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === targetId
+            ? {
+                ...m,
+                text: trimmed,
+                originalText: trimmed,
+                customerDisplayText: trimmed,
+                isEdited: false,
+                showOriginalToCustomer: false,
+                editedAt: undefined,
+                editedBy: undefined,
+                silentOriginalText: archive.silentOriginalText,
+                silentEditHistory: archive.silentEditHistory,
+                lastSilentEditedAt: archive.lastSilentEditedAt
+              }
+            : m
+        )
+      );
+      setSubAdminEditingMessage(null);
+      setSubAdminEditText('');
+    } catch (err: any) {
+      console.error('Failed to silently update Sub-Admin message:', err);
+      setChatError(err?.message || 'Could not update message. Please try again.');
+    } finally {
+      setSavingSubAdminEdit(false);
+    }
+  };
+
   const handleToggleOldMessageForCustomer = async (msg: ChatMessage, showOriginal: boolean) => {
     try {
       await toggleMessageOriginalForCustomer(msg.id, showOriginal);
@@ -320,6 +386,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   };
 
   const handleDelete = (msg: ChatMessage) => {
+    if (isSubAdmin && msg.senderRole !== 'sub_admin') return;
     setChatError(null);
     setDeletingMessage(msg);
   };
@@ -327,19 +394,24 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const handleConfirmDelete = async () => {
     if (!deletingMessage || isDeletingMessage) return;
     const msg = deletingMessage;
+    if (isSubAdmin && msg.senderRole !== 'sub_admin') {
+      setDeletingMessage(null);
+      return;
+    }
     const isCustomerMsg = msg.senderRole === 'customer';
     const isSubAdminMsg = msg.senderRole === 'sub_admin';
     const roleLabel = isCustomerMsg ? 'Customer' : isSubAdminMsg ? 'Sub Admin' : 'Admin';
+    const actorLabel = isSuperAdmin ? 'Super Admin' : 'Sub Admin';
     setIsDeletingMessage(true);
     setChatError(null);
     try {
       await deleteMessage(msg.id, currentUserProfile.fullName);
       setMessages(prev => prev.filter(m => m.id !== msg.id));
       await addAuditLog(
-        'message_deleted',
+        isSuperAdmin ? 'message_deleted' : 'sub_admin_message_deleted',
         currentUserProfile.fullName,
         currentUserProfile.role,
-        `Super Admin deleted ${roleLabel} message ID ${msg.id} sent by ${msg.senderName}: "${(msg.text || msg.attachmentName || 'Attachment').substring(0, 40)}"`,
+        `${actorLabel} deleted ${roleLabel} message ID ${msg.id} sent by ${msg.senderName}: "${(msg.originalText || msg.text || msg.attachmentName || 'Attachment').substring(0, 40)}"`,
         msg.id
       ).catch(() => {});
       setDeletingMessage(null);
@@ -355,6 +427,10 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const isSuperAdmin = currentUserProfile.role === 'super_admin';
   const isSubAdmin = currentUserProfile.role === 'sub_admin';
   const isCustomer = currentUserProfile.role === 'customer';
+
+  const canSubAdminEditOwnMessages =
+    isSubAdmin &&
+    (liveSubAdminCanEdit !== undefined ? liveSubAdminCanEdit === true : globalSubAdminCanEdit);
 
   // Customer presence helper (calculates Active Online or how many hours offline)
   const getCustomerPresenceInfo = () => {
@@ -712,6 +788,35 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                     </div>
                   )}
 
+                  {/* Sub-Admin Actions on Own Written Messages: Delete (always available) + Edit Message (when enabled by Super Admin) */}
+                  {isSubAdmin && isSubAdminMsg && (
+                    <div className="flex items-center justify-end gap-1.5 mb-1.5 pb-1 border-b border-white/20 text-[10px] flex-wrap">
+                      {canSubAdminEditOwnMessages && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSubAdminEditingMessage(msg);
+                            setSubAdminEditText(msg.originalText || msg.text || '');
+                          }}
+                          className="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white border border-white/30 font-bold inline-flex items-center space-x-1 transition-colors cursor-pointer"
+                          title="Edit your written message"
+                        >
+                          <Edit2 className="w-3 h-3 text-white" />
+                          <span>Edit Message</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(msg)}
+                        className="px-2 py-0.5 rounded bg-red-500/90 hover:bg-red-600 text-white border border-red-300/40 font-bold inline-flex items-center space-x-1 transition-colors cursor-pointer shadow-2xs"
+                        title="Delete this message you wrote to the customer"
+                      >
+                        <Trash2 className="w-3 h-3 text-white" />
+                        <span>Delete</span>
+                      </button>
+                    </div>
+                  )}
+
 
                   {/* Attachment Previews (Images, Receipts, Videos, Documents) */}
                   {msg.attachmentUrl && (() => {
@@ -836,6 +941,55 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                       </div>
                     );
                   })()}
+
+                  {/* Super Admin-Only Archive: Old Message Before Silent Edit (NEVER visible to Customer or Sub-Admin) */}
+                  {isSuperAdmin &&
+                    ((msg.silentEditHistory && msg.silentEditHistory.length > 0) ||
+                      (msg.silentOriginalText && msg.silentOriginalText !== msg.text)) && (() => {
+                      const history = msg.silentEditHistory || [];
+                      const oldestText = msg.silentOriginalText || history[0]?.previousText || '';
+                      return (
+                        <div className="mt-2.5 p-2.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-[11px] space-y-1.5">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="font-black uppercase tracking-wider text-[10px] text-amber-900">
+                              Old Message Before Silent Edit (Super Admin Only)
+                            </span>
+                            {msg.lastSilentEditedAt && (
+                              <span className="text-[10px] font-mono text-amber-700">
+                                Silently edited{' '}
+                                {new Date(msg.lastSilentEditedAt).toLocaleString([], {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })}
+                              </span>
+                            )}
+                          </div>
+                          <div className="whitespace-pre-wrap break-words bg-white/90 p-2 rounded-lg border border-amber-200 text-gray-900 font-medium">
+                            {oldestText}
+                          </div>
+                          {history.length > 1 && (
+                            <div className="space-y-1 pt-1 border-t border-amber-200">
+                              <div className="text-[10px] font-bold text-amber-800">
+                                Earlier Revisions ({history.length} total):
+                              </div>
+                              {history.slice(1).map((rev, revIdx) => (
+                                <div
+                                  key={`${msg.id}_rev_${revIdx}`}
+                                  className="text-[10px] bg-white/75 p-1.5 rounded border border-amber-200/80 whitespace-pre-wrap break-words text-gray-800"
+                                >
+                                  <span className="font-mono text-amber-700 mr-1.5">
+                                    [Rev {revIdx + 2} • {new Date(rev.editedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}]
+                                  </span>
+                                  {rev.previousText}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                   {/* Super Admin Sub-Admin Visibility Toggle on Direct Messages written by Super Admin */}
                   {isSuperAdmin && isSuperAdminMsg && (() => {
@@ -1178,7 +1332,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
         </div>
       )}
 
-      {/* Super Admin Permanent Delete Message Confirmation Modal */}
+      {/* Permanent Delete Message Confirmation Modal (Super Admin & Sub-Admin own messages) */}
       {deletingMessage && (
         <div
           className="fixed inset-0 bg-black/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-[60] animate-fadeIn"
@@ -1194,10 +1348,14 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               </div>
               <div className="min-w-0">
                 <h3 className="text-base font-extrabold text-gray-900">
-                  Delete {deletingMessage.senderRole === 'customer' ? 'Customer' : deletingMessage.senderRole === 'sub_admin' ? 'Sub Admin' : 'Admin'} Message?
+                  {isSubAdmin
+                    ? 'Delete Written Message?'
+                    : `Delete ${deletingMessage.senderRole === 'customer' ? 'Customer' : deletingMessage.senderRole === 'sub_admin' ? 'Sub Admin' : 'Admin'} Message?`}
                 </h3>
                 <p className="text-xs text-red-600 font-bold">
-                  Instantly removes this message for Customer, Sub-Admin & Super Admin
+                  {isSubAdmin
+                    ? 'Instantly removes this message from the customer chat'
+                    : 'Instantly removes this message for Customer, Sub-Admin & Super Admin'}
                 </p>
               </div>
             </div>
@@ -1206,9 +1364,9 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
                 Sent by {deletingMessage.senderName} • {new Date(deletingMessage.createdAt).toLocaleString()}
               </div>
-              {deletingMessage.text ? (
+              {(isSubAdmin ? deletingMessage.originalText || deletingMessage.text : deletingMessage.text) ? (
                 <p className="whitespace-pre-wrap break-words font-medium text-gray-900">
-                  &ldquo;{deletingMessage.text}&rdquo;
+                  &ldquo;{isSubAdmin ? deletingMessage.originalText || deletingMessage.text : deletingMessage.text}&rdquo;
                 </p>
               ) : (
                 <p className="italic text-gray-600">
@@ -1234,6 +1392,64 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{isDeletingMessage ? 'Deleting...' : 'Yes, Delete Permanently'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sub-Admin Silent Edit Written Message Modal */}
+      {subAdminEditingMessage && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-[60] animate-fadeIn"
+          onClick={() => !savingSubAdminEdit && setSubAdminEditingMessage(null)}
+        >
+          <div
+            className="bg-white rounded-3xl max-w-lg w-full max-h-[90dvh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4 border border-gray-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-extrabold text-gray-900 flex items-center space-x-2">
+                <Edit2 className="w-5 h-5 text-blue-600" />
+                <span>Edit Written Message</span>
+              </h3>
+              <button
+                type="button"
+                disabled={savingSubAdminEdit}
+                onClick={() => setSubAdminEditingMessage(null)}
+                className="p-1 rounded-full text-gray-400 hover:text-gray-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-700">Message Text:</label>
+              <textarea
+                rows={5}
+                value={subAdminEditText}
+                onChange={(e) => setSubAdminEditText(e.target.value)}
+                placeholder="Update your message..."
+                className="w-full p-3.5 border border-gray-300 rounded-2xl text-xs focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+
+            <div className="flex justify-end space-x-3 pt-2">
+              <button
+                type="button"
+                disabled={savingSubAdminEdit}
+                onClick={() => setSubAdminEditingMessage(null)}
+                className="px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-100 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={savingSubAdminEdit || !subAdminEditText.trim()}
+                onClick={handleSaveSubAdminSilentEdit}
+                className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl shadow-md cursor-pointer transition-colors"
+              >
+                {savingSubAdminEdit ? 'Saving...' : 'Save Message'}
               </button>
             </div>
           </div>

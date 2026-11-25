@@ -29,6 +29,7 @@ export interface UserProfile {
   lastDeviceType?: string;
   deviceLogins?: DeviceLoginRecord[];
   usaOnlyLogin?: boolean;
+  canEditOwnMessages?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -194,6 +195,13 @@ export interface Conversation {
   updatedAt: string;
 }
 
+export interface SilentEditVersion {
+  previousText: string;
+  editedAt: string;
+  editedBy?: string;
+  editedByRole?: UserRole;
+}
+
 export interface ChatMessage {
   id: string;
   conversationId: string;
@@ -218,6 +226,9 @@ export interface ChatMessage {
   editedBy?: string;
   originalText?: string;
   showOriginalToCustomer?: boolean;
+  silentOriginalText?: string;
+  silentEditHistory?: SilentEditVersion[];
+  lastSilentEditedAt?: string;
   isDeleted?: boolean;
   deletedAt?: string;
   deletedBy?: string;
@@ -246,6 +257,7 @@ export interface SystemSettings {
   messageModeration: boolean;
   customerMessagesToSubAdminAutoOn?: boolean;
   customerAutoOnPolicyVersion?: string;
+  subAdminCanEditOwnMessages?: boolean;
   companyName: string;
   supportEmail: string;
   supportPhone: string;

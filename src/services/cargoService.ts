@@ -13,7 +13,8 @@ import {
   addDoc,
   onSnapshot,
   arrayUnion,
-  arrayRemove
+  arrayRemove,
+  deleteField
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import {
@@ -1584,6 +1585,165 @@ export async function editMessage(
   }
 }
 
+/**
+ * Silent edit for Sub-Admin's own written message (enabled by Super Admin).
+ * Updates the message text cleanly so after editing it remains completely like it was NEVER edited
+ * for both Customer and Sub-Admin:
+ * - isEdited stays false
+ * - editedAt / editedBy are removed
+ * - createdAt original timestamp is preserved untouched
+ * - conversation preview updates only if this is the latest message (keeping original lastMessageTime)
+ * - Super-Admin-only archive (silentOriginalText & silentEditHistory) preserves every old version before silent edits
+ */
+export async function silentEditSubAdminMessage(
+  messageId: string,
+  newText: string,
+  editedByName?: string,
+  editedByRole?: UserRole
+): Promise<{
+  silentOriginalText: string;
+  silentEditHistory: NonNullable<ChatMessage['silentEditHistory']>;
+  lastSilentEditedAt: string;
+}> {
+  const path = `messages/${messageId}`;
+  const trimmed = newText.trim();
+  if (!trimmed) {
+    throw new Error('Message text cannot be empty.');
+  }
+  try {
+    const msgRef = doc(db, 'messages', messageId);
+    const snap = await getDoc(msgRef);
+    if (!snap.exists()) {
+      throw new Error('Message no longer exists.');
+    }
+    const current = snap.data() as ChatMessage;
+    if (current.senderRole !== 'sub_admin') {
+      throw new Error('Only Sub-Admin written messages can be updated with this action.');
+    }
+
+    const now = new Date().toISOString();
+    const previousText = current.text || current.originalText || '';
+    const firstOriginal = current.silentOriginalText || previousText;
+    const existingHistory = Array.isArray(current.silentEditHistory) ? current.silentEditHistory : [];
+    const nextHistory =
+      previousText && previousText !== trimmed
+        ? [
+            ...existingHistory,
+            {
+              previousText,
+              editedAt: now,
+              editedBy: editedByName || current.senderName || 'Sub-Admin',
+              editedByRole: editedByRole || 'sub_admin'
+            }
+          ]
+        : existingHistory;
+
+    await updateDoc(msgRef, {
+      text: trimmed,
+      originalText: trimmed,
+      customerDisplayText: trimmed,
+      isEdited: false,
+      showOriginalToCustomer: false,
+      editedAt: deleteField(),
+      editedBy: deleteField(),
+      silentOriginalText: firstOriginal,
+      silentEditHistory: nextHistory,
+      lastSilentEditedAt: now
+    });
+
+    if (current.conversationId) {
+      try {
+        const q = query(collection(db, 'messages'), where('conversationId', '==', current.conversationId));
+        const allSnap = await getDocs(q);
+        const nonDeleted = allSnap.docs
+          .map(d => ({ id: d.id, ...d.data() } as ChatMessage))
+          .filter(m => !m.isDeleted && m.moderationStatus !== 'rejected')
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+        const convUpdate: Record<string, any> = {};
+        if (nonDeleted[0]?.id === messageId) {
+          convUpdate.lastMessage = trimmed;
+        }
+        const subVisible = nonDeleted.filter(isMessageVisibleToSubAdmin);
+        if (subVisible[0]?.id === messageId) {
+          convUpdate.subAdminLastMessage = trimmed;
+        }
+        if (Object.keys(convUpdate).length > 0) {
+          await updateDoc(doc(db, 'conversations', current.conversationId), convUpdate);
+        }
+      } catch (convErr) {
+        console.warn('Notice updating conversation preview on silent edit:', convErr);
+      }
+    }
+
+    return {
+      silentOriginalText: firstOriginal,
+      silentEditHistory: nextHistory,
+      lastSilentEditedAt: now
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function updateSubAdminCanEditMessages(
+  uid: string,
+  canEdit: boolean,
+  email?: string
+): Promise<void> {
+  const path = `users/${uid}`;
+  try {
+    const now = new Date().toISOString();
+    const docIdsToUpdate = new Set<string>([uid]);
+    if (email) {
+      const normalizedEmail = email.toLowerCase().trim();
+      const usersSnap = await getDocs(collection(db, 'users'));
+      usersSnap.docs.forEach(d => {
+        const data = d.data() as UserProfile;
+        if (data.role === 'sub_admin' && (data.email || '').toLowerCase().trim() === normalizedEmail) {
+          docIdsToUpdate.add(d.id);
+        }
+      });
+    }
+
+    await Promise.all(
+      Array.from(docIdsToUpdate).map(id =>
+        setDoc(
+          doc(db, 'users', id),
+          { canEditOwnMessages: canEdit, updatedAt: now },
+          { merge: true }
+        )
+      )
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function updateAllSubAdminsCanEditMessages(
+  canEdit: boolean,
+  updatedBy: string
+): Promise<void> {
+  const path = 'system_settings/general';
+  try {
+    const now = new Date().toISOString();
+    await updateSystemSettings({ subAdminCanEditOwnMessages: canEdit }, updatedBy);
+
+    const subAdminsSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'sub_admin')));
+    await Promise.all(
+      subAdminsSnap.docs.map(d =>
+        setDoc(
+          doc(db, 'users', d.id),
+          { canEditOwnMessages: canEdit, updatedAt: now },
+          { merge: true }
+        )
+      )
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
 export async function toggleMessageOriginalForCustomer(
   messageId: string,
   showOriginal: boolean
@@ -1751,6 +1911,7 @@ const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   messageModeration: false,
   customerMessagesToSubAdminAutoOn: true,
   customerAutoOnPolicyVersion: CUSTOMER_AUTO_ON_POLICY_VERSION,
+  subAdminCanEditOwnMessages: false,
   companyName: 'International Express Cargo',
   supportEmail: 'support@internationalexpresscargo.com',
   supportPhone: '+1 (800) 555-CARGO',
@@ -1784,7 +1945,8 @@ function normalizeSystemSettings(raw?: Partial<SystemSettings> | null): SystemSe
     ...base,
     messageModeration,
     customerMessagesToSubAdminAutoOn,
-    customerAutoOnPolicyVersion: CUSTOMER_AUTO_ON_POLICY_VERSION
+    customerAutoOnPolicyVersion: CUSTOMER_AUTO_ON_POLICY_VERSION,
+    subAdminCanEditOwnMessages: Boolean(raw?.subAdminCanEditOwnMessages)
   };
 }
 
