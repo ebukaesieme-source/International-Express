@@ -85,6 +85,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
   const [subAdminEditingMessage, setSubAdminEditingMessage] = useState<ChatMessage | null>(null);
   const [subAdminEditText, setSubAdminEditText] = useState('');
   const [savingSubAdminEdit, setSavingSubAdminEdit] = useState(false);
+  const [revealedSubAdminDeleteMsgId, setRevealedSubAdminDeleteMsgId] = useState<string | null>(null);
 
   // Lightbox for media viewing
   const [lightboxMedia, setLightboxMedia] = useState<{ url: string; name: string } | null>(null);
@@ -415,6 +416,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
         msg.id
       ).catch(() => {});
       setDeletingMessage(null);
+      setRevealedSubAdminDeleteMsgId(null);
     } catch (err) {
       console.error('Failed to delete message:', err);
       setChatError('Failed to delete message. Please try again.');
@@ -788,31 +790,20 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                     </div>
                   )}
 
-                  {/* Sub-Admin Actions on Own Written Messages: Delete (always available) + Edit Message (when enabled by Super Admin) */}
-                  {isSubAdmin && isSubAdminMsg && (
-                    <div className="flex items-center justify-end gap-1.5 mb-1.5 pb-1 border-b border-white/20 text-[10px] flex-wrap">
-                      {canSubAdminEditOwnMessages && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSubAdminEditingMessage(msg);
-                            setSubAdminEditText(msg.originalText || msg.text || '');
-                          }}
-                          className="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white border border-white/30 font-bold inline-flex items-center space-x-1 transition-colors cursor-pointer"
-                          title="Edit your written message"
-                        >
-                          <Edit2 className="w-3 h-3 text-white" />
-                          <span>Edit Message</span>
-                        </button>
-                      )}
+                  {/* Sub-Admin Silent Edit Action (only visible when enabled by Super Admin) */}
+                  {canSubAdminEditOwnMessages && isSubAdminMsg && (
+                    <div className="flex items-center justify-end gap-1.5 mb-1.5 pb-1 border-b border-white/20 text-[10px]">
                       <button
                         type="button"
-                        onClick={() => handleDelete(msg)}
-                        className="px-2 py-0.5 rounded bg-red-500/90 hover:bg-red-600 text-white border border-red-300/40 font-bold inline-flex items-center space-x-1 transition-colors cursor-pointer shadow-2xs"
-                        title="Delete this message you wrote to the customer"
+                        onClick={() => {
+                          setSubAdminEditingMessage(msg);
+                          setSubAdminEditText(msg.originalText || msg.text || '');
+                        }}
+                        className="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white border border-white/30 font-bold inline-flex items-center space-x-1 transition-colors cursor-pointer"
+                        title="Edit your written message"
                       >
-                        <Trash2 className="w-3 h-3 text-white" />
-                        <span>Delete</span>
+                        <Edit2 className="w-3 h-3 text-white" />
+                        <span>Edit Message</span>
                       </button>
                     </div>
                   )}
@@ -1087,6 +1078,21 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                       isMe ? 'text-blue-100' : 'text-gray-400'
                     }`}
                   >
+                    {isSubAdmin && isSubAdminMsg && revealedSubAdminDeleteMsgId === msg.id && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRevealedSubAdminDeleteMsgId(null);
+                          handleDelete(msg);
+                        }}
+                        className="px-2 py-0.5 rounded bg-red-500 hover:bg-red-600 text-white border border-red-300/40 font-bold inline-flex items-center space-x-1 transition-colors cursor-pointer shadow-2xs mr-1"
+                        title="Delete this message"
+                      >
+                        <Trash2 className="w-3 h-3 text-white" />
+                        <span>Delete</span>
+                      </button>
+                    )}
+
                     <span>
                       {new Date(msg.createdAt).toLocaleTimeString([], {
                         hour: '2-digit',
@@ -1095,7 +1101,22 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                     </span>
 
                     {isMe && msg.moderationStatus !== 'rejected' && (
-                      <CheckCheck className="w-3.5 h-3.5" />
+                      isSubAdmin && isSubAdminMsg ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRevealedSubAdminDeleteMsgId((prev) =>
+                              prev === msg.id ? null : msg.id
+                            )
+                          }
+                          className="p-0.5 -m-0.5 rounded hover:text-white transition-colors cursor-pointer inline-flex items-center"
+                          aria-label="Toggle message actions"
+                        >
+                          <CheckCheck className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <CheckCheck className="w-3.5 h-3.5" />
+                      )
                     )}
                   </div>
                 </div>
