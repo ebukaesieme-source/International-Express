@@ -938,35 +938,54 @@ export const SuperAdminDashboard: React.FC = () => {
     }
   };
 
-  // Moderation Approve / Reject (Give Access to Sub Admin)
+  // Moderation Approve / Reject (handles BOTH Sub-Admin -> Customer approval AND Customer -> Sub-Admin access)
   const handleApproveMessage = async (msg: ChatMessage) => {
+    const isSubAdminOutgoing = msg.senderRole === 'sub_admin';
     try {
       const summaryText =
-        msg.text || (msg.attachmentType ? `[${msg.attachmentType.toUpperCase()}] ${msg.attachmentName || 'Photo / Receipt'}` : 'Photo / Receipt');
+        msg.customerDisplayText ||
+        msg.text ||
+        (msg.attachmentType ? `[${msg.attachmentType.toUpperCase()}] ${msg.attachmentName || 'Photo / Receipt'}` : 'Photo / Receipt');
       await moderateMessage(msg.id, 'approved', msg.conversationId, summaryText);
       await addAuditLog(
-        'message_approved',
+        isSubAdminOutgoing ? 'sub_admin_message_approved' : 'message_approved',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
-        `Super Admin granted Sub-Admin access to customer ${msg.attachmentUrl ? 'photo/receipt' : 'message'} ID ${msg.id} from ${msg.senderName}.`
+        isSubAdminOutgoing
+          ? `Super Admin approved Sub-Admin ${msg.attachmentUrl ? 'attachment' : 'message'} ID ${msg.id} for delivery to customer.`
+          : `Super Admin granted Sub-Admin access to customer ${msg.attachmentUrl ? 'photo/receipt' : 'message'} ID ${msg.id} from ${msg.senderName}.`
       );
-      showToast(`Access granted! Delivered to Sub-Admin dashboard.`);
+      showToast(
+        isSubAdminOutgoing
+          ? 'Approved! Message has now been delivered to the customer.'
+          : 'Access granted! Delivered to Sub-Admin dashboard.'
+      );
     } catch (err) {
       console.error(err);
-      showToast('Failed to grant Sub-Admin access.', 'error');
+      showToast(
+        isSubAdminOutgoing ? 'Failed to approve Sub-Admin message.' : 'Failed to grant Sub-Admin access.',
+        'error'
+      );
     }
   };
 
   const handleRejectMessage = async (msg: ChatMessage) => {
+    const isSubAdminOutgoing = msg.senderRole === 'sub_admin';
     try {
-      await moderateMessage(msg.id, 'rejected', msg.conversationId, msg.text || '', 'Held by Super Admin');
+      await moderateMessage(msg.id, 'rejected', msg.conversationId, msg.text || '', 'Blocked by Super Admin');
       await addAuditLog(
-        'message_rejected',
+        isSubAdminOutgoing ? 'sub_admin_message_rejected' : 'message_rejected',
         userProfile?.fullName || 'Super Admin',
         'super_admin',
-        `Rejected customer ${msg.attachmentUrl ? 'photo/receipt' : 'message'} ID ${msg.id} from ${msg.senderName}.`
+        isSubAdminOutgoing
+          ? `Super Admin blocked Sub-Admin ${msg.attachmentUrl ? 'attachment' : 'message'} ID ${msg.id} from being delivered to customer.`
+          : `Rejected customer ${msg.attachmentUrl ? 'photo/receipt' : 'message'} ID ${msg.id} from ${msg.senderName}.`
       );
-      showToast('Blocked from Sub-Admin dashboard.');
+      showToast(
+        isSubAdminOutgoing
+          ? 'Blocked! Customer will not receive this Sub-Admin message.'
+          : 'Blocked from Sub-Admin dashboard.'
+      );
     } catch (err) {
       console.error(err);
       showToast('Failed to block message.', 'error');
@@ -1614,31 +1633,30 @@ export const SuperAdminDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Customer-to-Sub-Admin Auto Delivery Banner */}
+              {/* Message Approval & Delivery Control Banner */}
               <div className="bg-gradient-to-r from-[#0b132b] to-[#1c2541] rounded-2xl p-6 text-white flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div className="flex items-center space-x-3">
                   <div className={`p-3 rounded-xl border ${
-                    settings?.customerMessagesToSubAdminAutoOn !== false
-                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                      : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                    pendingMessages.length > 0
+                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                      : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
                   }`}>
                     <Shield className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="font-extrabold text-base">Customer Messages to Sub-Admin</h3>
+                    <h3 className="font-extrabold text-base">Message Approval &amp; Moderation Control</h3>
                     <p className="text-xs text-gray-300 mt-0.5">
-                      Delivery to Sub-Admin is currently{' '}
+                      Every <strong className="text-amber-300">Sub-Admin → Customer</strong> message requires Super Admin approval before the customer can receive it.
+                      {' '}Customer → Sub-Admin text is{' '}
                       <strong className={settings?.customerMessagesToSubAdminAutoOn !== false ? 'text-emerald-400' : 'text-amber-400'}>
-                        {settings?.customerMessagesToSubAdminAutoOn !== false
-                          ? 'AUTO ON (Sub-Admins see customer messages automatically)'
-                          : 'MANUALLY OFF (Waiting for Super Admin approval)'}
+                        {settings?.customerMessagesToSubAdminAutoOn !== false ? 'AUTO ON' : 'MANUALLY OFF'}
                       </strong>
-                      . {pendingMessages.length} item(s) awaiting Super Admin access.
+                      . <strong className="text-white">{pendingMessages.length}</strong> message(s) awaiting Super Admin approval.
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-3 flex-wrap gap-y-2">
                   <button
                     onClick={handleToggleModeration}
                     className={`px-4 py-2 font-bold text-xs rounded-xl transition-all cursor-pointer ${
@@ -1647,14 +1665,14 @@ export const SuperAdminDashboard: React.FC = () => {
                         : 'bg-emerald-500 hover:bg-emerald-400 text-gray-950'
                     }`}
                   >
-                    {settings?.customerMessagesToSubAdminAutoOn !== false ? 'Turn Auto OFF' : 'Turn Auto ON'}
+                    {settings?.customerMessagesToSubAdminAutoOn !== false ? 'Customer Auto: ON' : 'Customer Auto: OFF'}
                   </button>
                   {pendingMessages.length > 0 && (
                     <button
                       onClick={() => setActiveSection('moderation')}
-                      className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl border border-white/20 transition-all cursor-pointer"
+                      className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-gray-950 font-extrabold text-xs rounded-xl transition-all cursor-pointer shadow-xs"
                     >
-                      View Queue ({pendingMessages.length})
+                      Approve Queue ({pendingMessages.length})
                     </button>
                   )}
                 </div>
@@ -2984,21 +3002,21 @@ export const SuperAdminDashboard: React.FC = () => {
             </div>
           )}
 
-          {/* SECTION 5: MESSAGE & PHOTO/RECEIPT ACCESS QUEUE */}
+          {/* SECTION 5: MESSAGE APPROVAL & ACCESS QUEUE */}
           {activeSection === 'moderation' && (
             <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-gray-100">
                 <div>
                   <h2 className="text-lg font-black text-gray-900 flex items-center space-x-2">
                     <Shield className="w-5 h-5 text-amber-500" />
-                    <span>Photo, Receipt &amp; Message Access Queue</span>
+                    <span>Message Approval &amp; Access Queue</span>
                   </h2>
                   <p className="text-xs text-gray-500">
-                    Customer photos, payment receipts, and held messages wait here until Super Admin grants access to arrive at the Sub-Admin dashboard.
+                    Every message a Sub-Admin sends to a Customer waits here for Super Admin approval before the customer can receive it, along with held customer photos and receipts.
                   </p>
                 </div>
                 <div className="text-xs font-bold px-3 py-1 rounded-full bg-amber-100 text-amber-800">
-                  {pendingMessages.length} Awaiting Access
+                  {pendingMessages.length} Awaiting Approval
                 </div>
               </div>
 
@@ -3009,24 +3027,49 @@ export const SuperAdminDashboard: React.FC = () => {
                   </div>
                   <h4 className="font-bold text-sm text-gray-800">Queue is Clear</h4>
                   <p className="text-xs text-gray-500">
-                    No customer photos, receipts, or messages are currently waiting for Sub-Admin access.
+                    No Sub-Admin messages or customer photos/receipts are currently waiting for Super Admin approval.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {pendingMessages.map((msg) => {
                     const matchedConv = conversations.find(c => c.id === msg.conversationId);
+                    const isSubAdminOutgoing = msg.senderRole === 'sub_admin';
+                    const subAdminSender = isSubAdminOutgoing
+                      ? subAdmins.find(s => s.uid === msg.senderId || (msg.senderEmail && (s.email || '').toLowerCase() === msg.senderEmail.toLowerCase()))
+                      : null;
                     return (
                       <div
                         key={msg.id}
-                        className="p-4 bg-slate-50 border border-amber-200/80 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
+                        className={`p-4 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border ${
+                          isSubAdminOutgoing
+                            ? 'bg-blue-50/60 border-blue-200'
+                            : 'bg-slate-50 border-amber-200/80'
+                        }`}
                       >
                         <div className="space-y-2 flex-1 min-w-0 w-full">
                           <div className="flex items-center flex-wrap gap-2">
-                            <span className="font-bold text-sm text-gray-900">{msg.senderName}</span>
-                            <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                              Customer
+                            <span className="font-bold text-sm text-gray-900">
+                              {isSubAdminOutgoing
+                                ? (subAdminSender?.fullName || msg.senderEmail || msg.senderName || 'Sub-Admin')
+                                : msg.senderName}
                             </span>
+                            {isSubAdminOutgoing ? (
+                              <>
+                                <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded bg-blue-600 text-white">
+                                  Sub-Admin → Customer
+                                </span>
+                                {matchedConv && (
+                                  <span className="text-[11px] font-bold text-blue-900 bg-white px-2 py-0.5 rounded border border-blue-200">
+                                    To Customer: {matchedConv.customerName}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                                Customer → Sub-Admin
+                              </span>
+                            )}
                             {msg.attachmentUrl && (
                               <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
                                 {msg.attachmentType === 'image' ? 'Photo / Receipt' : msg.attachmentType === 'document' ? 'Receipt / Document' : 'Media Attachment'}
@@ -3051,7 +3094,7 @@ export const SuperAdminDashboard: React.FC = () => {
                             );
                             const downloadName =
                               msg.attachmentName ||
-                              (renderAsImg ? 'customer_receipt.jpg' : 'customer_receipt.pdf');
+                              (renderAsImg ? 'attachment_photo.jpg' : 'attachment_document.pdf');
 
                             return (
                               <div className="bg-white p-2.5 rounded-xl border border-gray-200 space-y-2">
@@ -3059,7 +3102,7 @@ export const SuperAdminDashboard: React.FC = () => {
                                   <div className="space-y-2">
                                     <img
                                       src={msg.attachmentUrl}
-                                      alt={msg.attachmentName || 'Customer uploaded photo or receipt'}
+                                      alt={msg.attachmentName || 'Uploaded photo or receipt'}
                                       className="max-h-60 rounded-lg object-contain border border-gray-100 bg-slate-50"
                                     />
                                     <button
@@ -3103,7 +3146,9 @@ export const SuperAdminDashboard: React.FC = () => {
                             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer"
                           >
                             <Check className="w-4 h-4" />
-                            <span>Give Access to Sub-Admin</span>
+                            <span>
+                              {isSubAdminOutgoing ? 'Approve & Send to Customer' : 'Give Access to Sub-Admin'}
+                            </span>
                           </button>
                           {matchedConv && (
                             <button

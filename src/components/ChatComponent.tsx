@@ -36,6 +36,7 @@ import {
   toggleMessageOriginalForCustomer,
   deleteMessage,
   toggleMessageSubAdminAccess,
+  moderateMessage,
   subscribeToSystemSettings,
   updateSystemSettings,
   addAuditLog,
@@ -221,17 +222,21 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
 
     const isCustomer = currentUserProfile.role === 'customer';
     const isSuperAdmin = currentUserProfile.role === 'super_admin';
+    const isSubAdminSender = currentUserProfile.role === 'sub_admin';
     const hasMediaOrReceipt = Boolean(attachmentPreview?.url);
 
     // If Super Admin is sending: direct message to customer means Sub Admin will NOT see it
     // If Customer sends a photo, video, document, or receipt: ALWAYS hold for Super Admin access approval first!
+    // If Sub Admin sends ANY message to Customer: ALWAYS require Super Admin approval before Customer can receive it!
     const isDirectToCustomer = isSuperAdmin && superAdminDirectToCustomer;
     const sharedWithSubAdmin = isCustomer
       ? (hasMediaOrReceipt ? false : customerMessagesAutoOnRef.current)
       : !isDirectToCustomer;
     const hiddenFromSubAdmin = isCustomer ? !sharedWithSubAdmin : isDirectToCustomer;
     const moderationStatus: 'approved' | 'pending_moderation' =
-      isCustomer && !sharedWithSubAdmin ? 'pending_moderation' : 'approved';
+      isSubAdminSender || (isCustomer && !sharedWithSubAdmin)
+        ? 'pending_moderation'
+        : 'approved';
 
     try {
       const recipientId = isCustomer
@@ -383,6 +388,43 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
     } catch (err) {
       console.error(err);
       setChatError('Failed to update message visibility.');
+    }
+  };
+
+  const handleModerateSubAdminMessage = async (
+    msg: ChatMessage,
+    status: 'approved' | 'rejected' | 'pending_moderation'
+  ) => {
+    try {
+      const summaryText =
+        msg.customerDisplayText ||
+        msg.text ||
+        (msg.attachmentType ? `[${msg.attachmentType.toUpperCase()}] ${msg.attachmentName || 'Attachment'}` : 'Attachment');
+      await moderateMessage(
+        msg.id,
+        status,
+        msg.conversationId,
+        summaryText,
+        status === 'rejected' ? 'Blocked by Super Admin' : ''
+      );
+      await addAuditLog(
+        status === 'approved'
+          ? 'sub_admin_message_approved'
+          : status === 'rejected'
+          ? 'sub_admin_message_rejected'
+          : 'sub_admin_message_held',
+        currentUserProfile.fullName,
+        currentUserProfile.role,
+        status === 'approved'
+          ? `Super Admin approved Sub-Admin message ID ${msg.id} for delivery to customer ${conversation.customerName}.`
+          : status === 'rejected'
+          ? `Super Admin blocked Sub-Admin message ID ${msg.id} from reaching customer ${conversation.customerName}.`
+          : `Super Admin held Sub-Admin message ID ${msg.id} back from customer ${conversation.customerName}.`,
+        msg.id
+      );
+    } catch (err) {
+      console.error('Failed to moderate Sub-Admin message:', err);
+      setChatError('Failed to update approval status. Please try again.');
     }
   };
 
@@ -1018,6 +1060,80 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                     );
                   })()}
 
+                  {/* Super Admin Approval Controls on Sub-Admin Messages to Customer */}
+                  {isSuperAdmin && isSubAdminMsg && (() => {
+                    const isPending = msg.moderationStatus === 'pending_moderation';
+                    const isRejected = msg.moderationStatus === 'rejected';
+                    return (
+                      <div
+                        className={`mt-2 pt-2 border-t flex flex-wrap items-center justify-between text-[11px] gap-2 ${
+                          isPending
+                            ? 'border-amber-300/70 bg-amber-400/20 -mx-2 px-2.5 py-2 rounded-xl'
+                            : isRejected
+                            ? 'border-red-300/60 bg-red-500/20 -mx-2 px-2.5 py-2 rounded-xl'
+                            : 'border-white/25'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-1.5 text-white">
+                          {isPending ? (
+                            <Clock className="w-3.5 h-3.5 text-amber-200 shrink-0 animate-pulse" />
+                          ) : isRejected ? (
+                            <Lock className="w-3.5 h-3.5 text-red-200 shrink-0" />
+                          ) : (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                          )}
+                          <span className="font-extrabold text-[10px]">
+                            {isPending
+                              ? 'Pending Approval — Customer has NOT received this yet'
+                              : isRejected
+                              ? 'Blocked — Not delivered to Customer'
+                              : 'Approved & Delivered to Customer'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {isPending && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleModerateSubAdminMessage(msg, 'approved')}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-extrabold cursor-pointer transition-colors shadow-xs inline-flex items-center space-x-1"
+                              >
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>Approve &amp; Send to Customer</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleModerateSubAdminMessage(msg, 'rejected')}
+                                className="px-2.5 py-1 rounded-lg bg-red-500 hover:bg-red-600 text-white text-[10px] font-bold cursor-pointer transition-colors"
+                              >
+                                Block
+                              </button>
+                            </>
+                          )}
+                          {isRejected && (
+                            <button
+                              type="button"
+                              onClick={() => handleModerateSubAdminMessage(msg, 'approved')}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-extrabold cursor-pointer transition-colors shadow-xs"
+                            >
+                              Approve &amp; Deliver
+                            </button>
+                          )}
+                          {!isPending && !isRejected && (
+                            <button
+                              type="button"
+                              onClick={() => handleModerateSubAdminMessage(msg, 'pending_moderation')}
+                              className="px-2 py-0.5 rounded-lg bg-white/15 hover:bg-white/25 text-white border border-white/25 text-[10px] font-bold cursor-pointer transition-colors"
+                            >
+                              Hold from Customer
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Super Admin Sub-Admin Access Control on Customer Messages, Photos & Receipts */}
                   {isSuperAdmin && isCustomerMsg && (() => {
                     const isMediaOrReceipt = Boolean(msg.attachmentUrl || msg.attachmentType);
@@ -1100,7 +1216,7 @@ export const ChatComponent: React.FC<ChatComponentProps> = ({
                       })}
                     </span>
 
-                    {isMe && msg.moderationStatus !== 'rejected' && (
+                    {isMe && (
                       isSubAdmin && isSubAdminMsg ? (
                         <button
                           type="button"

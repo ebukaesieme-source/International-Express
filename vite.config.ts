@@ -1,11 +1,44 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, type Plugin} from 'vite';
+
+function autoVersionPlugin(buildVersion: string): Plugin {
+  const payload = JSON.stringify({version: buildVersion});
+  return {
+    name: 'auto-version-manifest',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const pathname = (req.url || '').split('?')[0];
+        if (pathname === '/version.json') {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+          res.end(payload);
+          return;
+        }
+        next();
+      });
+    },
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: payload,
+      });
+    },
+  };
+}
 
 export default defineConfig(() => {
+  const buildVersion = Date.now().toString();
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), autoVersionPlugin(buildVersion)],
+    define: {
+      __APP_BUILD_VERSION__: JSON.stringify(buildVersion),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

@@ -14,6 +14,7 @@ import { AuthModal } from './pages/AuthModal';
 import { TrackingSection } from './components/TrackingSection';
 import { X, ShieldAlert, Truck } from 'lucide-react';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { startAutoRefreshOnDeploy } from './utils/autoRefresh';
 
 const AppContent: React.FC = () => {
   const { userProfile, loading: authLoading, isSuperAdmin, isSubAdmin, isCustomer } = useAuth();
@@ -297,6 +298,10 @@ const AppContent: React.FC = () => {
 };
 
 export default function App() {
+  React.useEffect(() => {
+    return startAutoRefreshOnDeploy();
+  }, []);
+
   return (
     <ErrorBoundary>
       <AuthProvider>
